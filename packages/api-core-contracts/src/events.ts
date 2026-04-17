@@ -58,4 +58,6 @@ export interface JenkinsWebhookHeaders {
   signature: string;
   idempotencyKey: string;
   event: JenkinsWebhookEventName;
+  /** Best-effort remote IP from the controller. Passed into rejected-webhook audit rows. */
+  ip?: string;
 }

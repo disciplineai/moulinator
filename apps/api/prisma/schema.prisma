@@ -61,12 +61,31 @@ model User {
   created_at    DateTime @default(now())
   updated_at    DateTime @updatedAt
 
-  credentials   GithubCredential[]
-  repos         Repository[]
-  contributions TestContribution[]
-  audit_logs    AuditLog[]
+  credentials    GithubCredential[]
+  repos          Repository[]
+  contributions  TestContribution[]
+  audit_logs     AuditLog[]
+  refresh_tokens RefreshToken[]
 
   @@map("users")
+}
+
+model RefreshToken {
+  id          String    @id @db.Char(26) // ULID
+  user_id     String    @db.Char(26)
+  jti         String    @unique @db.Uuid
+  issued_at   DateTime  @default(now())
+  expires_at  DateTime
+  revoked_at  DateTime?
+  replaced_by String?   @db.Char(26) // fk to RefreshToken.id on rotation
+
+  user         User           @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  successor    RefreshToken?  @relation("Rotation", fields: [replaced_by], references: [id])
+  predecessors RefreshToken[] @relation("Rotation")
+
+  @@index([user_id, revoked_at])
+  @@index([expires_at]) // for vacuum
+  @@map("refresh_tokens")
 }
 
 model GithubCredential {

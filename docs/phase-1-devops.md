@@ -104,6 +104,30 @@ manage rotation. That's a separate work stream; deferring it is a conscious
 trade-off for the MVP. Raising it here and in the review log so the next
 hardening pass can pick it up without rediscovering the gap.
 
+**Rogue-agent escalation (Phase 3 security-runner-sandbox review).** A leaked
+`JENKINS_AGENT_SECRET` doesn't just let an attacker impersonate the runner —
+it lets them register **additional** inbound agents under the same name/label
+and race to claim queued jobs from the `moulinator-runner` pool. The first
+agent to pick up a job receives the pre-signed MinIO GET URL for the
+student's workspace tarball as a build parameter, exposing student code even
+though the workspace itself is credential-free (the URL is the capability).
+
+MVP mitigations, already in place:
+- MinIO pre-signed URLs have short TTLs (minutes, set by the API's storage
+  service). Stale URLs stolen from logs are useless.
+- The secret is stored in Dokploy's vault, mounted into the agent container
+  read-only, and scoped to one VM — rotation on any suspicion of leak is a
+  single Dokploy redeploy.
+- Audit events land on every webhook; a sudden second `build_started` for the
+  same `test_run_id` from an unexpected source IP would show up in the
+  `audit_logs` table.
+
+Hardening path (not in this slice): short-lived per-agent client certs from
+an internal CA, Jenkins configured to require + verify them, and automatic
+rotation tied to agent lifecycle. That's the real mTLS story and it closes
+this escalation by making the agent-to-controller channel bind-to-identity
+rather than bind-to-shared-secret.
+
 ### 5. Firewall sidecar, not iptables-in-pipeline
 
 The pipeline does NOT edit iptables directly. It sends a JSON request to a
@@ -265,6 +289,19 @@ Jenkins agent registration:
 - **`firewall.sh` socat main loop** uses `SYSTEM:"while read …; do … done"` to
   invoke `handle_line` per connection. Functional but brittle; a small Go
   daemon would be cleaner. Tracked as follow-up; not a correctness issue.
+- **Live image builds — status at handoff.** `docker build -f apps/web/Dockerfile .`
+  succeeds and the container boots + listens on 3000 (TCP healthcheck passes).
+  `docker build -f apps/api/Dockerfile .` also succeeds, but the container
+  crashes at module-resolve with `Cannot find module 'express'` because
+  `apps/api/src/webhooks/raw-body.middleware.ts` imports `express` directly
+  while `apps/api/package.json#dependencies` only declares
+  `@nestjs/platform-express` (express is transitive; pnpm doesn't hoist it
+  and `pnpm --prod deploy` strips it from the runtime tree). One-liner fix
+  lives with backend-crud: add `"express": "^4.19.2"` to `dependencies`. Not
+  worked around on the DevOps side because any workaround would mask the
+  dep bug. The Dockerfile itself is verified: build completes, layers are
+  right, port/healthcheck match `apps/api/src/main.ts:50` (API_PORT=3001),
+  entrypoint path is correct (`dist/apps/api/src/main.js`).
 
 ## What I did NOT do, and why
 

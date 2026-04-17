@@ -37,6 +37,8 @@ env:
   - { name: MASTER_KEY_HEX,           required: true,  secret: true, description: "32-byte hex (64 chars). openssl rand -hex 32" }
   - { name: JWT_ACCESS_SECRET,        required: true,  secret: true }
   - { name: JWT_REFRESH_SECRET,       required: true,  secret: true }
+  - { name: JWT_ACCESS_TTL_SECONDS,   required: false, default: "900" }
+  - { name: JWT_REFRESH_TTL_SECONDS,  required: false, default: "2592000" }
 
   # Jenkins
   - { name: JENKINS_WEBHOOK_SECRET,   required: true,  secret: true }

@@ -140,3 +140,70 @@ Environment variables added to the contract (requested from
 - Frontend: the typed client generation pipeline can consume
   `openapi.yaml` directly — no DTO changes required. Reference the
   types in `@moulinator/api-core-contracts/dto` if convenient.
+
+## Phase 5 deltas (2026-04-17)
+
+The Phase 3 security review surfaced auth and credential gaps.
+Backend-crud landed the following:
+
+- **Refresh token moved to httpOnly cookie.** `/auth/signup`,
+  `/auth/login`, `/auth/refresh` now set `mou_rt` on the response via
+  `Set-Cookie: mou_rt=<jwt>; HttpOnly; SameSite=Lax; Path=/auth;
+  Secure (prod)` and **no longer include `refresh_token` in the JSON
+  body**. `AuthTokens` in both `openapi.yaml` and
+  `@moulinator/api-core-contracts` lost the field. XSS can no longer
+  exfiltrate the refresh token.
+- **New `POST /auth/logout`** (204, idempotent). Reads the cookie,
+  revokes the jti via `IRefreshTokenStore.revoke`, clears the cookie.
+  Audits `auth.logout`.
+- **CSRF-lite on `/auth/refresh`.** Requires `X-Moulinator-Refresh: 1`
+  header. Cross-origin simple requests cannot set custom headers
+  without triggering a preflight, so drive-by refresh via embedded
+  resources is blocked.
+- **`IRefreshTokenStore` interface + `REFRESH_TOKEN_STORE` DI token**
+  added to `api-core-contracts`. Backend-core implements the real
+  Prisma-backed service; `apps/api/src/auth/refresh-token.stub.ts`
+  throws `ServiceUnavailableException` on mutating paths so an
+  unwired deploy fails loudly.
+- **Prisma `RefreshToken` model** (team-lead approved schema edit):
+  id, user_id, jti (uuid unique), issued_at, expires_at, revoked_at,
+  replaced_by (self-ref for rotation chains). Indexes on
+  `(user_id, revoked_at)` and `expires_at`. Initial migration
+  `prisma/migrations/20260417120000_init/migration.sql` captures the
+  full schema (no migrations existed previously).
+- **Auth audit coverage.** `auth.refresh` (success),
+  `auth.refresh_failed` with `reason` metadata (`missing_cookie`,
+  `invalid_or_revoked`, `user_not_found`, `rotate_failed`),
+  `auth.logout`. IP threaded through every call.
+- **F6 — `CredentialsService.markUsed(credentialId)`**
+  unconditionally stamps `last_used_at = now()` and audits
+  `credentials.used`. Exposed on `ICredentialsService` +
+  `CREDENTIALS_SERVICE` DI token so the orchestrator can wire it
+  without a direct module import.
+- **F8 — one credential per user.** `CredentialsService.create`
+  runs `$transaction` that deletes any existing rows for the user,
+  inserts the new row, then emits `credentials.replaced` (with old
+  ids in metadata) + `credentials.create` audit entries.
+
+### Tests
+- Auth: signup/login cookie + audit, refresh CSRF header, refresh
+  missing-cookie, refresh success rotating cookie, refresh
+  reuse-detected → 401, logout idempotent + revoke-on-cookie.
+- Credentials: invalid PAT rejection, no-prior-credentials single
+  audit, replace-with-transaction emits `credentials.replaced` with
+  the right old ids, markUsed stamps + audits.
+- Full suite: 79/79 tests across 11 suites
+  (`MOULINATOR_DISABLE_QUEUES=1 MOULINATOR_SKIP_BUCKET_BOOTSTRAP=1`).
+
+### Backend-core handoff — complete (2026-04-17)
+- Real `RefreshTokenService` landed at
+  `apps/api/src/core/auth/refresh-token.service.ts`, bound to
+  `REFRESH_TOKEN_STORE` in `CoreModule` (Global). The stub file and
+  the `AuthModule` `useClass` binding were removed. End-to-end wiring
+  is live; 12 suites / 90 tests pass across the whole API.
+
+### Env vars
+- No new vars for backend-crud Phase 5.
+- `NODE_ENV=production` is required for the cookie `secure` flag to
+  be set; dev environments still set the cookie but without `Secure`
+  so local HTTP works.

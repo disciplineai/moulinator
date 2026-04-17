@@ -58,13 +58,21 @@ ensure_chain() {
   iptables -w -A "$_chain" -o lo -j ACCEPT
 }
 
-# Hook a chain into BOTH the FORWARD and INPUT chains, filtered by the
-# docker bridge interface for the given network. Reasoning:
-#   - FORWARD covers egress from the job container out to the world.
-#   - INPUT covers traffic from the job container to the host itself
-#     (runner VM services bound on the bridge gateway or 0.0.0.0).
-# Without the INPUT hook, a job container could reach dockerd (via the
-# gateway), SSH, or any other host-local service — bypassing the allowlist.
+# Hook a chain into DOCKER-USER (for egress from the container) and INPUT (for
+# host-local traffic), filtered by the docker bridge interface.
+#
+# Why DOCKER-USER, not FORWARD:
+#   Docker ≥ 17.06 installs its own rules early in FORWARD and also flushes /
+#   reinserts them on daemon restart, network creation, and every `docker run`.
+#   A rule inserted directly into FORWARD is therefore vulnerable to being
+#   shuffled below Docker's own ACCEPTs (or flushed entirely). `DOCKER-USER` is
+#   the documented hook Docker itself jumps to FIRST and never touches — user
+#   rules there survive daemon operations and run before Docker's own allow
+#   chain. See https://docs.docker.com/network/packet-filtering-firewalls/
+#
+# INPUT hook stays as-is: it covers traffic from the job container to the host
+# itself (services bound on the bridge gateway or 0.0.0.0) and Docker does not
+# touch INPUT on user-defined bridges.
 hook_chain() {
   _chain="$1"
   _netname="$2"
@@ -74,10 +82,17 @@ hook_chain() {
     return 1
   fi
   _brname="br-$_netid"
-  iptables -w -D FORWARD -i "$_brname" -j "$_chain" 2>/dev/null || true
-  iptables -w -I FORWARD -i "$_brname" -j "$_chain"
-  iptables -w -D INPUT   -i "$_brname" -j "$_chain" 2>/dev/null || true
-  iptables -w -I INPUT   -i "$_brname" -j "$_chain"
+  # DOCKER-USER exists on any host with Docker ≥ 17.06, and the daemon installs
+  # a `-j DOCKER-USER` jump early in FORWARD on startup. The `-N` create below
+  # is a defensive no-op for a first-boot race where dockerd hasn't populated
+  # the chain yet. Rules in DOCKER-USER survive Docker's own network/container
+  # operations (unlike rules inserted directly into FORWARD, which Docker may
+  # shuffle or flush).
+  iptables -w -N DOCKER-USER 2>/dev/null || true
+  iptables -w -D DOCKER-USER -i "$_brname" -j "$_chain" 2>/dev/null || true
+  iptables -w -I DOCKER-USER -i "$_brname" -j "$_chain"
+  iptables -w -D INPUT       -i "$_brname" -j "$_chain" 2>/dev/null || true
+  iptables -w -I INPUT       -i "$_brname" -j "$_chain"
 }
 
 apply_rules() {
@@ -124,8 +139,11 @@ cleanup_rules() {
   _netid=$(docker network inspect -f '{{.Id}}' "$_network" 2>/dev/null | cut -c1-12 || true)
   if [ -n "$_netid" ]; then
     _brname="br-$_netid"
-    iptables -w -D FORWARD -i "$_brname" -j "$_chain" 2>/dev/null || true
-    iptables -w -D INPUT   -i "$_brname" -j "$_chain" 2>/dev/null || true
+    # Remove from DOCKER-USER (current hook) and FORWARD (legacy, for pre-F11
+    # builds whose chains might still be lingering after a sidecar upgrade).
+    iptables -w -D DOCKER-USER -i "$_brname" -j "$_chain" 2>/dev/null || true
+    iptables -w -D FORWARD     -i "$_brname" -j "$_chain" 2>/dev/null || true
+    iptables -w -D INPUT       -i "$_brname" -j "$_chain" 2>/dev/null || true
   fi
   iptables -w -F "$_chain" 2>/dev/null || true
   iptables -w -X "$_chain" 2>/dev/null || true

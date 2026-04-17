@@ -32,9 +32,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     );
   }
 
+  const handleLogout = async () => {
+    await logout();
+    router.replace('/login');
+  };
+
   return (
     <div className="relative flex min-h-screen flex-col">
-      <TopBar user={user} onLogout={logout} />
+      <TopBar user={user} onLogout={handleLogout} />
       <div className="mx-auto grid w-full max-w-[1360px] flex-1 grid-cols-1 gap-0 px-6 md:grid-cols-[220px_1fr]">
         <SideNav pathname={pathname} />
         <main className="py-8 md:pl-10">{children}</main>
@@ -49,7 +54,7 @@ function TopBar({
   onLogout,
 }: {
   user: { email: string; role: string };
-  onLogout: () => void;
+  onLogout: () => void | Promise<void>;
 }) {
   return (
     <header className="border-b border-ink/10 bg-parchment-50">

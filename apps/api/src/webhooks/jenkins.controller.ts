@@ -7,6 +7,7 @@ import {
   Headers,
   HttpStatus,
   Inject,
+  Ip,
   NotFoundException,
   Post,
   Req,
@@ -14,6 +15,7 @@ import {
   UnauthorizedException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import {
   JENKINS_WEBHOOK_SERVICE,
@@ -44,12 +46,14 @@ export class JenkinsWebhookController {
   ) {}
 
   @Post()
+  @Throttle({ short: { limit: 60, ttl: 60_000 } })
   async handle(
     @Req() req: RawBodyRequest,
     @Res({ passthrough: true }) res: Response,
     @Headers('x-moulinator-signature') signature: string | undefined,
     @Headers('x-moulinator-idempotency-key') idempotencyKey: string | undefined,
     @Headers('x-moulinator-event') event: string | undefined,
+    @Ip() ip: string,
     @Body() body: JenkinsWebhookPayload,
   ): Promise<{ status: string }> {
     if (!signature || !idempotencyKey || !event) {
@@ -87,6 +91,7 @@ export class JenkinsWebhookController {
         signature,
         idempotencyKey,
         event: event as JenkinsWebhookEventName,
+        ip,
       },
     );
 

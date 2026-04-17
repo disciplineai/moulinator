@@ -15,6 +15,13 @@ export interface EncryptedPat {
 export interface ICryptoService {
   encryptPat(plaintext: string): Promise<EncryptedPat>;
   decryptPat(blob: EncryptedPat): Promise<string>;
+  /**
+   * Variant that returns the plaintext as a mutable Buffer. Callers MUST
+   * `buf.fill(0)` in a `finally` as soon as the PAT is no longer needed.
+   * Prefer this over `decryptPat` for server-side archive flows so that the
+   * token lives in a buffer we can zero rather than an immutable string.
+   */
+  decryptPatToBuffer(blob: EncryptedPat): Promise<Buffer>;
 }
 
 export interface GithubRepoMeta {
@@ -107,9 +114,63 @@ export interface IAuditService {
   log(entry: AuditEntry): Promise<void>;
 }
 
+/**
+ * Minimal surface the orchestrator needs from the credentials module so it
+ * can stamp `last_used_at` on every PAT use. Keeps a direct orchestrator →
+ * CredentialsService import from creating a module cycle.
+ */
+export interface ICredentialsService {
+  markUsed(credentialId: Ulid): Promise<void>;
+}
+
+/**
+ * Refresh-token persistence + rotation. Implemented by backend-core
+ * (apps/api/src/core/auth/refresh-token.service.ts) against the
+ * `refresh_tokens` Prisma table; consumed by AuthService.
+ *
+ * Signed JWT payload is `{ sub: userId, jti, typ: 'refresh', iat, exp }`.
+ * No role/email — that's the access token's job.
+ */
+export interface IssuedRefreshToken {
+  token: string;
+  jti: string;
+  expiresAt: Date;
+}
+
+export interface VerifiedRefreshToken {
+  userId: Ulid;
+  jti: string;
+}
+
+export interface IRefreshTokenStore {
+  /** Insert a new refresh-token row + return the signed JWT. */
+  issue(userId: Ulid, ttlSeconds: number): Promise<IssuedRefreshToken>;
+  /**
+   * Verify JWT signature + DB state (exists, not expired, not revoked).
+   * Returns null for any failure — caller maps null to 401.
+   */
+  verify(token: string): Promise<VerifiedRefreshToken | null>;
+  /**
+   * Rotate: mark the old jti revoked + insert a new jti in one transaction.
+   * If the old row is already revoked, the store MUST treat that as reuse,
+   * call `revokeAllForUser(userId, 'reuse_detected')`, and throw.
+   */
+  rotate(
+    oldJti: string,
+    userId: Ulid,
+    ttlSeconds: number,
+  ): Promise<IssuedRefreshToken>;
+  /** Revoke a single jti (idempotent). */
+  revoke(jti: string): Promise<void>;
+  /** Revoke every non-revoked token for a user — theft response + logout-all. */
+  revokeAllForUser(userId: Ulid, reason: string): Promise<void>;
+}
+
 export const CRYPTO_SERVICE = Symbol('ICryptoService');
 export const GITHUB_CLIENT = Symbol('IGithubClient');
 export const RUNS_ORCHESTRATOR = Symbol('IRunsOrchestrator');
 export const JENKINS_WEBHOOK_SERVICE = Symbol('IJenkinsWebhookService');
 export const STORAGE_SERVICE = Symbol('IStorageService');
 export const AUDIT_SERVICE = Symbol('IAuditService');
+export const CREDENTIALS_SERVICE = Symbol('ICredentialsService');
+export const REFRESH_TOKEN_STORE = Symbol('IRefreshTokenStore');

@@ -63,7 +63,21 @@ export class CryptoService implements ICryptoService, OnModuleInit {
     }
   }
 
+  /**
+   * Convenience wrapper around decryptPatToBuffer. Prefer
+   * decryptPatToBuffer for server-side archive flows so the plaintext can
+   * be zeroed — strings are immutable and the JS engine may retain copies.
+   */
   async decryptPat(blob: EncryptedPat): Promise<string> {
+    const buf = await this.decryptPatToBuffer(blob);
+    try {
+      return buf.toString('utf8');
+    } finally {
+      buf.fill(0);
+    }
+  }
+
+  async decryptPatToBuffer(blob: EncryptedPat): Promise<Buffer> {
     if (
       !Buffer.isBuffer(blob.ciphertext) ||
       !Buffer.isBuffer(blob.iv) ||
@@ -88,8 +102,7 @@ export class CryptoService implements ICryptoService, OnModuleInit {
     try {
       const dec = createDecipheriv('aes-256-gcm', dek, blob.iv);
       dec.setAuthTag(blob.authTag);
-      const plain = Buffer.concat([dec.update(blob.ciphertext), dec.final()]);
-      return plain.toString('utf8');
+      return Buffer.concat([dec.update(blob.ciphertext), dec.final()]);
     } finally {
       dek.fill(0);
     }

@@ -10,8 +10,11 @@ import * as bcrypt from 'bcrypt';
 import { ulid } from 'ulid';
 import {
   AUDIT_SERVICE,
+  REFRESH_TOKEN_STORE,
   type AuthTokens,
   type IAuditService,
+  type IRefreshTokenStore,
+  type IssuedRefreshToken,
   type Role,
 } from '@moulinator/api-core-contracts';
 import { PrismaService } from '../prisma/prisma.service';
@@ -24,6 +27,11 @@ interface Subject {
   role: Role;
 }
 
+export interface AuthResult {
+  tokens: AuthTokens;
+  refresh: IssuedRefreshToken;
+}
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -31,9 +39,11 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     @Inject(AUDIT_SERVICE) private readonly audit: IAuditService,
+    @Inject(REFRESH_TOKEN_STORE)
+    private readonly refreshStore: IRefreshTokenStore,
   ) {}
 
-  async signup(email: string, password: string, ip?: string): Promise<AuthTokens> {
+  async signup(email: string, password: string, ip?: string): Promise<AuthResult> {
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) {
       throw new ConflictException({ error: 'email_taken' });
@@ -57,10 +67,10 @@ export class AuthService {
       entityId: user.id,
       ip,
     });
-    return this.issueTokens({ id: user.id, email: user.email, role: user.role });
+    return this.issue({ id: user.id, email: user.email, role: user.role });
   }
 
-  async login(email: string, password: string, ip?: string): Promise<AuthTokens> {
+  async login(email: string, password: string, ip?: string): Promise<AuthResult> {
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) {
       await this.audit.log({
@@ -91,47 +101,110 @@ export class AuthService {
       entityId: user.id,
       ip,
     });
-    return this.issueTokens({ id: user.id, email: user.email, role: user.role });
+    return this.issue({ id: user.id, email: user.email, role: user.role });
   }
 
-  async refresh(refreshToken: string): Promise<AuthTokens> {
-    const secret = this.config.get<string>('JWT_REFRESH_SECRET');
-    if (!secret) {
-      throw new UnauthorizedException({ error: 'refresh_misconfigured' });
+  /**
+   * Refresh: validate the refresh cookie, rotate the jti, return new
+   * tokens. Reuse detection is backend-core's job inside
+   * IRefreshTokenStore.rotate — we surface it as a 401 after audit.
+   */
+  async refresh(cookieToken: string | undefined, ip?: string): Promise<AuthResult> {
+    if (!cookieToken) {
+      await this.audit.log({
+        actorId: null,
+        action: 'auth.refresh_failed',
+        metadata: { reason: 'missing_cookie' },
+        ip,
+      });
+      throw new UnauthorizedException({ error: 'missing_refresh_cookie' });
     }
-    let payload: { sub: string; email: string; role: Role; type: string };
-    try {
-      payload = await this.jwt.verifyAsync(refreshToken, { secret });
-    } catch {
+    const verified = await this.refreshStore.verify(cookieToken);
+    if (!verified) {
+      await this.audit.log({
+        actorId: null,
+        action: 'auth.refresh_failed',
+        metadata: { reason: 'invalid_or_revoked' },
+        ip,
+      });
       throw new UnauthorizedException({ error: 'invalid_refresh_token' });
     }
-    if (payload.type !== 'refresh') {
-      throw new UnauthorizedException({ error: 'invalid_token_type' });
-    }
-    const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
+    const user = await this.prisma.user.findUnique({ where: { id: verified.userId } });
     if (!user) {
+      await this.audit.log({
+        actorId: verified.userId,
+        action: 'auth.refresh_failed',
+        metadata: { reason: 'user_not_found' },
+        ip,
+      });
       throw new UnauthorizedException({ error: 'user_not_found' });
     }
-    return this.issueTokens({ id: user.id, email: user.email, role: user.role });
+    const ttl = this.refreshTtl();
+    let rotated: IssuedRefreshToken;
+    try {
+      rotated = await this.refreshStore.rotate(verified.jti, user.id, ttl);
+    } catch {
+      await this.audit.log({
+        actorId: user.id,
+        action: 'auth.refresh_failed',
+        metadata: { reason: 'rotate_failed' },
+        ip,
+      });
+      throw new UnauthorizedException({ error: 'invalid_refresh_token' });
+    }
+    await this.audit.log({
+      actorId: user.id,
+      action: 'auth.refresh',
+      entity: 'user',
+      entityId: user.id,
+      ip,
+    });
+    const tokens = await this.issueAccessToken({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+    });
+    return { tokens, refresh: rotated };
   }
 
-  private async issueTokens(subject: Subject): Promise<AuthTokens> {
+  /**
+   * Logout is idempotent: missing cookie or already-revoked jti still
+   * returns 204. Audit whatever we observed.
+   */
+  async logout(cookieToken: string | undefined, ip?: string): Promise<void> {
+    if (!cookieToken) return;
+    const verified = await this.refreshStore.verify(cookieToken);
+    if (!verified) return;
+    await this.refreshStore.revoke(verified.jti);
+    await this.audit.log({
+      actorId: verified.userId,
+      action: 'auth.logout',
+      entity: 'user',
+      entityId: verified.userId,
+      ip,
+    });
+  }
+
+  private async issue(subject: Subject): Promise<AuthResult> {
+    const tokens = await this.issueAccessToken(subject);
+    const refresh = await this.refreshStore.issue(subject.id, this.refreshTtl());
+    return { tokens, refresh };
+  }
+
+  private async issueAccessToken(subject: Subject): Promise<AuthTokens> {
     const accessTtl = Number(this.config.get('JWT_ACCESS_TTL_SECONDS') ?? 900);
-    const refreshTtl = Number(this.config.get('JWT_REFRESH_TTL_SECONDS') ?? 60 * 60 * 24 * 30);
     const accessSecret = this.config.get<string>('JWT_ACCESS_SECRET');
-    const refreshSecret = this.config.get<string>('JWT_REFRESH_SECRET');
-    if (!accessSecret || !refreshSecret) {
-      throw new Error('JWT secrets are not configured');
+    if (!accessSecret) {
+      throw new Error('JWT_ACCESS_SECRET is not configured');
     }
-    const base = { sub: subject.id, email: subject.email, role: subject.role };
     const access_token = await this.jwt.signAsync(
-      { ...base, type: 'access' },
+      { sub: subject.id, email: subject.email, role: subject.role, type: 'access' },
       { secret: accessSecret, expiresIn: accessTtl },
     );
-    const refresh_token = await this.jwt.signAsync(
-      { ...base, type: 'refresh' },
-      { secret: refreshSecret, expiresIn: refreshTtl },
-    );
-    return { access_token, refresh_token, expires_in: accessTtl };
+    return { access_token, expires_in: accessTtl };
+  }
+
+  private refreshTtl(): number {
+    return Number(this.config.get('JWT_REFRESH_TTL_SECONDS') ?? 60 * 60 * 24 * 30);
   }
 }

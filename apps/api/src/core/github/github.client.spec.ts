@@ -178,6 +178,68 @@ describe('GithubClient', () => {
     ).rejects.toThrow(/not_found/);
   });
 
+  it('archiveCommit strips Authorization on 302 redirect to codeload', async () => {
+    const sha = 'd'.repeat(40);
+    const tarBody = Buffer.from('codeload-bytes');
+    const codeloadUrl = `https://codeload.github.com/acme/widget/tar.gz/${sha}`;
+    stub = installFetchStub({
+      [`GET https://api.github.com/repos/acme/widget/tarball/${sha}`]: () => ({
+        status: 302,
+        body: '',
+        headers: { location: codeloadUrl },
+      }),
+      [`GET ${codeloadUrl}`]: () => ({
+        status: 200,
+        body: tarBody,
+        headers: { 'content-type': 'application/x-gzip' },
+      }),
+    });
+    const res = await client.archiveCommit(
+      'ghp_secret_pat',
+      'https://github.com/acme/widget',
+      sha,
+    );
+    expect(res.toString('utf8')).toBe('codeload-bytes');
+    // First call (API): Authorization MUST be present.
+    const first = stub.calls.find((c) => c.url.includes('api.github.com'))!;
+    expect(first.headers['authorization']).toBe('token ghp_secret_pat');
+    // Second call (codeload): Authorization MUST NOT be present.
+    const second = stub.calls.find((c) => c.url === codeloadUrl)!;
+    expect(second.headers['authorization']).toBeUndefined();
+  });
+
+  it('archiveCommit throws when redirect has no Location header', async () => {
+    const sha = 'e'.repeat(40);
+    stub = installFetchStub({
+      [`GET https://api.github.com/repos/acme/widget/tarball/${sha}`]: () => ({
+        status: 302,
+        body: '',
+        headers: {},
+      }),
+    });
+    await expect(
+      client.archiveCommit('t', 'https://github.com/acme/widget', sha),
+    ).rejects.toThrow(/archive_redirect_missing_location/);
+  });
+
+  it('archiveCommit accepts a Buffer token (F7 scope-down)', async () => {
+    const sha = 'f'.repeat(40);
+    stub = installFetchStub({
+      [`GET https://api.github.com/repos/acme/widget/tarball/${sha}`]: () => ({
+        status: 200,
+        body: Buffer.from('ok'),
+      }),
+    });
+    const res = await client.archiveCommit(
+      Buffer.from('ghp_as_buffer', 'utf8'),
+      'https://github.com/acme/widget',
+      sha,
+    );
+    expect(res.toString('utf8')).toBe('ok');
+    const call = stub.calls[0]!;
+    expect(call.headers['authorization']).toBe('token ghp_as_buffer');
+  });
+
   it('getBranchHead returns commit sha', async () => {
     const sha = 'c'.repeat(40);
     stub = installFetchStub({

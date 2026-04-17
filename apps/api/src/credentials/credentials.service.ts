@@ -54,18 +54,42 @@ export class CredentialsService {
     }
     const encrypted = await this.crypto.encryptPat(token);
     const id = ulid();
-    const row = await this.prisma.githubCredential.create({
-      data: {
-        id,
-        user_id: userId,
-        label: label ?? validation.login ?? 'github',
-        ciphertext: encrypted.ciphertext,
-        iv: encrypted.iv,
-        auth_tag: encrypted.authTag,
-        wrapped_dek: encrypted.wrappedDek,
-        scopes: validation.scopes,
-      },
+
+    // F8: enforce "one credential per user" — delete any existing rows and
+    // insert the new one in a single transaction.
+    const { row, replacedIds } = await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.githubCredential.findMany({
+        where: { user_id: userId },
+        select: { id: true },
+      });
+      if (existing.length > 0) {
+        await tx.githubCredential.deleteMany({ where: { user_id: userId } });
+      }
+      const created = await tx.githubCredential.create({
+        data: {
+          id,
+          user_id: userId,
+          label: label ?? validation.login ?? 'github',
+          ciphertext: encrypted.ciphertext,
+          iv: encrypted.iv,
+          auth_tag: encrypted.authTag,
+          wrapped_dek: encrypted.wrappedDek,
+          scopes: validation.scopes,
+        },
+      });
+      return { row: created, replacedIds: existing.map((r) => r.id) };
     });
+
+    if (replacedIds.length > 0) {
+      await this.audit.log({
+        actorId: userId,
+        action: 'credentials.replaced',
+        entity: 'github_credential',
+        entityId: id,
+        ip,
+        metadata: { replaced: replacedIds },
+      });
+    }
     await this.audit.log({
       actorId: userId,
       action: 'credentials.create',
@@ -94,6 +118,25 @@ export class CredentialsService {
       entity: 'github_credential',
       entityId: id,
       ip,
+    });
+  }
+
+  /**
+   * F6: unconditional last-writer-wins stamp on `last_used_at`. Called by
+   * the orchestrator every time it decrypts a PAT to clone. Safe to run
+   * concurrently — no lock; we do not care about `updated_at` drift here.
+   */
+  async markUsed(credentialId: string): Promise<void> {
+    const row = await this.prisma.githubCredential.update({
+      where: { id: credentialId },
+      data: { last_used_at: new Date() },
+      select: { id: true, user_id: true },
+    });
+    await this.audit.log({
+      actorId: row.user_id,
+      action: 'credentials.used',
+      entity: 'github_credential',
+      entityId: row.id,
     });
   }
 }

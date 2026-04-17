@@ -54,25 +54,40 @@ paths:
 
   /auth/refresh:
     post:
-      summary: Exchange refresh token for new access token
+      summary: Exchange refresh cookie for new access token
+      description: |
+        Consumes the httpOnly `mou_rt` cookie set by /auth/login, /auth/signup,
+        or a prior /auth/refresh. Requires the CSRF-lite `X-Moulinator-Refresh: 1`
+        header to mitigate drive-by refresh via embedded resources. Rotates the
+        refresh token on every successful call; the previous refresh jti is
+        revoked server-side.
       security: []
       tags: [auth]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [refresh_token]
-              properties:
-                refresh_token: { type: string }
+      parameters:
+        - name: X-Moulinator-Refresh
+          in: header
+          required: true
+          schema: { type: string, enum: ["1"] }
       responses:
         "200":
-          description: OK
+          description: OK (sets new mou_rt cookie in Set-Cookie)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AuthTokens" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /auth/logout:
+    post:
+      summary: Revoke refresh token and clear cookie
+      description: |
+        Reads the current `mou_rt` cookie, revokes the underlying refresh jti,
+        clears the cookie on the response, and emits an `auth.logout` audit
+        entry. Always returns 204, even if the cookie is missing or already
+        expired, so clients can treat it as idempotent.
+      security: []
+      tags: [auth]
+      responses:
+        "204": { description: Logged out }
 
   /me:
     get:
@@ -420,10 +435,15 @@ components:
 
     AuthTokens:
       type: object
-      required: [access_token, refresh_token, expires_in]
+      required: [access_token, expires_in]
+      description: |
+        Refresh token is delivered as an httpOnly cookie (`mou_rt`) on the
+        Set-Cookie header — it is never included in the JSON body so that
+        XSS cannot exfiltrate it. Clients send `credentials: 'include'` on
+        refresh + logout requests and rely on the browser to attach the
+        cookie.
       properties:
         access_token: { type: string }
-        refresh_token: { type: string }
         expires_in: { type: integer, description: Seconds }
 
     User:

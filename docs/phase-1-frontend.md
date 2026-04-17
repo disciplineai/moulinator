@@ -49,9 +49,12 @@ The default AI look (soft purple-to-indigo gradients, rounded-2xl white cards, I
 ### Auth
 
 - `AuthProvider` holds the current user and subscribes to the in-memory `tokenStore`.
-- Access token lives in memory only. A lightweight client-side `moulinator_session` cookie is set alongside it so Next middleware can gate protected routes at the edge without needing the backend's httpOnly refresh cookie to flow through.
-- The refresh token: for MVP the backend returns it in the `AuthTokens` body and we keep it in memory. The rules explicitly forbid localStorage. Production guidance (tracked for Phase 2): have `/auth/login` and `/auth/refresh` set an httpOnly `Set-Cookie: refresh_token=…` and stop returning the refresh token in JSON. That is a backend change, not a frontend one, but noted here as the intended terminal state.
-- `middleware.ts` redirects un-cookied requests on `/dashboard|/repos|/credentials|/runs|/contribute` to `/login?next=…`, and shoves authenticated users away from `/login` and `/signup`.
+- Access token lives in memory only; the JSON `AuthTokens` shape is `{ access_token, expires_in }` — no refresh token in the body.
+- Refresh token is delivered by the backend as an httpOnly `mou_rt` cookie (scope `path=/auth`, sameSite=lax, secure in prod). JS cannot read it; the browser attaches it on `/auth/refresh` and `/auth/logout` when we call with `credentials: 'include'` (which is the default on `openapi-fetch` and the explicit mode for the refresh/logout `fetch`es).
+- `/auth/refresh` uses a CSRF-lite `X-Moulinator-Refresh: 1` header. Browsers do not add that header on cross-origin simple requests, so drive-by refresh via an embedded resource is blocked.
+- Logout hits `POST /auth/logout` (204, idempotent), clears in-memory state + the marker cookie, and routes the user back to `/login`.
+- A client-visible `moulinator_session` marker cookie (session-scoped, no max-age) lets Next edge middleware gate protected routes without reading the httpOnly cookie. On reload, `AuthProvider` calls `tryRefresh()` if the marker is present; on failure the marker is cleared so middleware stops granting access.
+- `middleware.ts` redirects un-cookied requests on `/dashboard|/repos|/credentials|/runs|/contribute` to `/login?next=…`. The `next` param is validated in `login/page.tsx` (same-origin, single-slash only) to block open redirects.
 
 ### Live run updates
 
@@ -90,12 +93,11 @@ All three are green on first run.
 
 ## Known gaps / deferred
 
-1. **Refresh token transport.** See above — backend is expected to move to httpOnly cookie in Phase 2. Today the frontend keeps it in memory; it survives tab life but not a full refresh (next session must re-authenticate). Acceptable for MVP.
-2. **No websocket run feed.** Polling is the contract; WS is explicitly out of scope per instructions.
-3. **Project list endpoint.** The UI relies on `GET /projects` to label rows and populate selects. If the backend returns `[]` before fixtures are seeded, the repo rows show "unknown" and the register form's project dropdown is empty — this is only a concern during devops' initial seed window.
-4. **No pagination UI yet.** `GET /repos/{id}/runs` returns a cursor, but the detail page currently fetches only the first 20. If power users ask for it we can add a "load more" link; the hook is already shaped for it.
-5. **No email verification / password recovery.** Out of scope per phase-0.
-6. **PAT UX.** We warn about HTTP submission, never store the token client-side past the POST, and show scopes + last-used. Rotation is user-owned — copy explicitly says so.
+1. **No websocket run feed.** Polling is the contract; WS is explicitly out of scope per instructions.
+2. **Project list endpoint.** The UI relies on `GET /projects` to label rows and populate selects. If the backend returns `[]` before fixtures are seeded, the repo rows show "unknown" and the register form's project dropdown is empty — this is only a concern during devops' initial seed window.
+3. **No pagination UI yet.** `GET /repos/{id}/runs` returns a cursor, but the detail page currently fetches only the first 20. If power users ask for it we can add a "load more" link; the hook is already shaped for it.
+4. **No email verification / password recovery.** Out of scope per phase-0.
+5. **PAT UX.** We warn about HTTP submission, never store the token client-side past the POST, and show scopes + last-used. Rotation is user-owned — copy explicitly says so.
 
 ## Env vars consumed
 

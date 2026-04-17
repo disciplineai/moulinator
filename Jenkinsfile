@@ -205,15 +205,27 @@ pipeline {
               (*) echo "tests_commit_sha must be lowercase hex" >&2; exit 1 ;;
             esac
             rm -rf "$M_TESTS_CLONE_DIR"
-            if [ -n "$M_DEPLOY_KEY" ]; then
-              # Require a pinned known_hosts file. Refusing TOFU forces the
-              # operator to pre-provision the expected host key, which blocks
-              # first-connection MITM against the tests-repo SSH endpoint.
+
+            # F10: detect SSH-schemed tests-repo URLs — `git@host:path` or
+            # `ssh://...`. These go over SSH and MUST have a pinned known_hosts
+            # file regardless of whether a deploy key is supplied. A public
+            # SSH tests-repo without a deploy key is still vulnerable to
+            # first-connection MITM; refuse TOFU uniformly.
+            is_ssh=0
+            case "$M_TESTS_REPO_URL" in
+              git@*|ssh://*) is_ssh=1 ;;
+            esac
+
+            if [ "$is_ssh" = "1" ]; then
               if [ -z "$M_KNOWN_HOSTS" ] || [ ! -r "$M_KNOWN_HOSTS" ]; then
-                echo "TESTS_REPO_KNOWN_HOSTS_PATH must be set to a readable known_hosts file when a deploy key is used" >&2
+                echo "TESTS_REPO_KNOWN_HOSTS_PATH must point to a readable known_hosts file for SSH tests-repo URLs (got: '$M_KNOWN_HOSTS')" >&2
                 exit 1
               fi
-              export GIT_SSH_COMMAND="ssh -i $M_DEPLOY_KEY -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$M_KNOWN_HOSTS -o IdentitiesOnly=yes"
+              if [ -n "$M_DEPLOY_KEY" ]; then
+                export GIT_SSH_COMMAND="ssh -i $M_DEPLOY_KEY -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$M_KNOWN_HOSTS -o IdentitiesOnly=yes"
+              else
+                export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$M_KNOWN_HOSTS"
+              fi
             fi
 
             # Reproducibility invariant: the pinned SHA MUST be reachable. We
@@ -226,19 +238,28 @@ pipeline {
             git -C "$M_TESTS_CLONE_DIR" remote add origin "$M_TESTS_REPO_URL"
 
             if git -C "$M_TESTS_CLONE_DIR" fetch --depth 1 origin "$M_TESTS_COMMIT_SHA" 2>/dev/null; then
-              : # server supports fetch-by-sha; perfect
+              : # server supports fetch-by-sha; perfect — this is the expected path on GitHub.
             else
-              # Fall back to progressive deepening.
+              # F13: bounded fallback. On GitHub with uploadpack.allowReachableSHA1InWant
+              # (the default) the shallow fetch-by-sha above always works, so this
+              # branch is near-dead code in normal operation. Cap the deepen at 200
+              # and fail loudly rather than slurping the entire repo history —
+              # unbounded `--unshallow` is a network + disk DoS waiting to happen
+              # on a misconfigured pin. Operators who legitimately need the
+              # unshallow fallback (e.g., self-hosted gitea without SHA-in-want)
+              # set ALLOW_TESTS_REPO_UNSHALLOW=1 in the runner-plane env.
               git -C "$M_TESTS_CLONE_DIR" fetch --depth 50 origin
-              for depth in 200 1000 5000 20000; do
-                if git -C "$M_TESTS_CLONE_DIR" rev-parse --verify "$M_TESTS_COMMIT_SHA^{commit}" >/dev/null 2>&1; then
-                  break
-                fi
-                git -C "$M_TESTS_CLONE_DIR" fetch --deepen "$depth" origin || true
-              done
               if ! git -C "$M_TESTS_CLONE_DIR" rev-parse --verify "$M_TESTS_COMMIT_SHA^{commit}" >/dev/null 2>&1; then
-                # Last resort: full unshallow.
-                git -C "$M_TESTS_CLONE_DIR" fetch --unshallow origin || git -C "$M_TESTS_CLONE_DIR" fetch origin
+                git -C "$M_TESTS_CLONE_DIR" fetch --deepen 200 origin || true
+              fi
+              if ! git -C "$M_TESTS_CLONE_DIR" rev-parse --verify "$M_TESTS_COMMIT_SHA^{commit}" >/dev/null 2>&1; then
+                if [ "${ALLOW_TESTS_REPO_UNSHALLOW:-0}" = "1" ]; then
+                  echo "tests_commit_sha not in last 200 commits — unshallowing (ALLOW_TESTS_REPO_UNSHALLOW=1)" >&2
+                  git -C "$M_TESTS_CLONE_DIR" fetch --unshallow origin || git -C "$M_TESTS_CLONE_DIR" fetch origin
+                else
+                  echo "tests_commit_sha $M_TESTS_COMMIT_SHA not reachable within depth 200; refusing to unshallow (set ALLOW_TESTS_REPO_UNSHALLOW=1 to opt in)" >&2
+                  exit 1
+                fi
               fi
             fi
 
@@ -305,6 +326,12 @@ pipeline {
               # invoke sh -c with a fixed script that references them — so the
               # image entrypoint sees `$SLUG` / `$HARNESS`, never a literal
               # command string assembled from user input.
+              #
+              # F12: /work is tmpfs with `nosuid,nodev`. `noexec` is NOT set
+              # because C projects compile student code into /work and then
+              # exec the resulting binaries; noexec would break that path.
+              # nosuid + nodev are safe invariants regardless of language
+              # (no setuid binaries, no device files in a scratch workspace).
               docker run --rm \
                 --name "$M_CONTAINER" \
                 --network "$M_NETWORK" \
@@ -313,7 +340,7 @@ pipeline {
                 --memory-swap "${M_MEM}m" \
                 --cpus "$M_CPUS" \
                 --read-only \
-                --tmpfs "/work:rw,size=${M_MEM}m,mode=1777" \
+                --tmpfs "/work:rw,size=${M_MEM}m,mode=1777,nosuid,nodev" \
                 --cap-drop ALL \
                 --security-opt no-new-privileges \
                 --user 2000:2000 \
@@ -464,6 +491,14 @@ def validateRequiredParams() {
                   'tests_commit_sha', 'runner_image_repo', 'runner_image_digest', 'webhook_url']
   required.each { name ->
     if (!params[name]) { error("missing required parameter: ${name}") }
+  }
+  // F9: reject the placeholder digest fixtures ship with. If this digest
+  // reaches the pipeline it means CI hasn't yet built + pushed the runner
+  // image and updated the fixture. Fail loudly rather than attempting a
+  // `docker pull` of a non-existent image. Same machine code as backend-core's
+  // corresponding guard in runs.orchestrator.ts: runner_image_digest_placeholder.
+  if (params.runner_image_digest ==~ /^sha256:0{64}$/) {
+    error("runner_image_digest_placeholder: runner image not yet published by CI (placeholder digest ${params.runner_image_digest})")
   }
   if (!(params.runner_image_digest ==~ /^sha256:[a-f0-9]{64}$/)) {
     error("runner_image_digest must be sha256:<64 hex>")

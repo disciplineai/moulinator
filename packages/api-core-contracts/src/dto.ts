@@ -22,9 +22,13 @@ export interface ApiError {
   details?: Record<string, unknown>;
 }
 
+/**
+ * JSON body returned from /auth/signup, /auth/login, /auth/refresh.
+ * The refresh token lives in the httpOnly `mou_rt` cookie set by the
+ * server — never in this body.
+ */
 export interface AuthTokens {
   access_token: string;
-  refresh_token: string;
   expires_in: number;
 }
 

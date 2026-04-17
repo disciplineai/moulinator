@@ -160,7 +160,7 @@ describe('JenkinsWebhookService', () => {
     });
   }
 
-  it('rejects bad signature with audit', async () => {
+  it('rejects bad signature with sanitized audit (no entityId, unverified metadata)', async () => {
     const { svc, prisma } = makeService();
     seedQueuedRun(prisma);
     const body = Buffer.from(JSON.stringify({ test_run_id: runId, jenkins_build_url: 'x', started_at: '2026-04-17T12:00:00Z', runner_image_digest: digest, tests_repo_commit_sha: testsSha }));
@@ -172,14 +172,24 @@ describe('JenkinsWebhookService', () => {
         signature: 'sha256=' + '0'.repeat(64),
         idempotencyKey: '11111111-1111-1111-1111-111111111111',
         event: 'build_started',
+        ip: '10.0.0.42',
       },
     );
     expect(res.status).toBe('invalid_signature');
-    expect(
-      prisma.auditLogs.some(
-        (e) => e.action === 'webhook_rejected_signature',
-      ),
-    ).toBe(true);
+    const rejected = prisma.auditLogs.find(
+      (e) => e.action === 'webhook_rejected_signature',
+    );
+    expect(rejected).toBeTruthy();
+    // F4 hardening: entity/entityId not attached because payload is unverified.
+    expect(rejected.entity).toBeUndefined();
+    expect(rejected.entityId).toBeUndefined();
+    // Metadata keys renamed to show "unverified" semantics.
+    expect(rejected.metadata).toEqual({
+      event_header: 'build_started',
+      claimed_idempotency_key: '11111111-1111-1111-1111-111111111111',
+      raw_body_sha256_prefix: expect.stringMatching(/^[0-9a-f]{16}$/),
+    });
+    expect(rejected.ip).toBe('10.0.0.42');
   });
 
   it('applies build_started queued→running and audits', async () => {

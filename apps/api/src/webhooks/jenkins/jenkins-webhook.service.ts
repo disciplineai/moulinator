@@ -53,12 +53,19 @@ export class JenkinsWebhookService
   ): Promise<JenkinsWebhookResult> {
     // 1. Verify signature first — cheapest rejection.
     if (!this.verifySignature(rawBody, headers.signature)) {
+      // Never attach `entity`/`entityId` on a rejected-signature row — the
+      // payload is unverified and `test_run_id` could be attacker-controlled.
+      // All metadata keys carry "unverified" semantics by name.
+      const rawBodySha = createHash('sha256').update(rawBody).digest('hex');
       await this.audit.log({
         actorId: null,
         action: 'webhook_rejected_signature',
-        entity: 'test_run',
-        entityId: (parsedBody as { test_run_id?: string }).test_run_id,
-        metadata: { event: headers.event, idempotency_key: headers.idempotencyKey },
+        ip: headers.ip,
+        metadata: {
+          event_header: headers.event,
+          claimed_idempotency_key: headers.idempotencyKey,
+          raw_body_sha256_prefix: rawBodySha.slice(0, 16),
+        },
       });
       return { status: 'invalid_signature' };
     }

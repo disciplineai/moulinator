@@ -101,10 +101,18 @@ export class GithubClient implements IGithubClient {
 
   /**
    * Fetch the commit tarball as a Buffer.
-   * PAT is passed only via Authorization header; never logged; never written to disk.
+   * PAT is passed only via Authorization header on the initial GitHub API
+   * request. On the 3xx redirect to codeload.github.com (which issues
+   * pre-signed object-storage URLs), we explicitly DROP the Authorization
+   * header on the follow-up fetch — codeload URLs are self-authenticated,
+   * and leaking the PAT to *.githubusercontent.com / s3 redirectors would
+   * violate the "PAT never leaves the control plane" rule.
+   *
+   * Token may be a string OR a Buffer (F7 PAT scope-down). We convert to
+   * string only for the Authorization header build and discard it.
    */
   async archiveCommit(
-    token: string,
+    token: string | Buffer,
     githubUrl: string,
     commitSha: string,
   ): Promise<Buffer> {
@@ -112,17 +120,41 @@ export class GithubClient implements IGithubClient {
       throw new Error('commit_sha_must_be_hex');
     }
     const { owner, repo } = parseGithubUrl(githubUrl);
-    const res = await fetch(
-      `${GITHUB_API}/repos/${owner}/${repo}/tarball/${commitSha}`,
-      { headers: authHeader(token), redirect: 'follow' },
-    );
+    const tokenStr = Buffer.isBuffer(token) ? token.toString('utf8') : token;
+    const url = `${GITHUB_API}/repos/${owner}/${repo}/tarball/${commitSha}`;
+    const res = await fetch(url, {
+      headers: authHeader(tokenStr),
+      redirect: 'manual',
+    });
     if (res.status === 404) throw new Error('repo_or_commit_not_found');
     if (res.status === 401 || res.status === 403) {
       throw new Error('pat_cannot_archive_commit');
     }
+    // GitHub returns 302 Found → codeload.github.com pre-signed URL.
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get('location');
+      if (!location) {
+        throw new Error('archive_redirect_missing_location');
+      }
+      // Follow WITHOUT Authorization — codeload URLs are self-authenticated.
+      const followed = await fetch(location, {
+        headers: {
+          accept: 'application/vnd.github+json',
+          'user-agent': 'moulinator-api',
+        },
+        redirect: 'follow',
+      });
+      if (followed.status === 404) throw new Error('repo_or_commit_not_found');
+      if (!followed.ok) {
+        throw new Error(`archive_followed_status_${followed.status}`);
+      }
+      const ab = await followed.arrayBuffer();
+      return Buffer.from(ab);
+    }
     if (!res.ok) {
       throw new Error(`archive_failed_status_${res.status}`);
     }
+    // Non-redirect success (some stubs return 200 directly).
     const ab = await res.arrayBuffer();
     return Buffer.from(ab);
   }

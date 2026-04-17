@@ -15,7 +15,14 @@ import { RolesGuard } from './roles.guard';
     JwtModule.register({}),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard, RolesGuard],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    JwtAuthGuard,
+    RolesGuard,
+    // REFRESH_TOKEN_STORE is bound by CoreModule (Global, imported first in
+    // AppModule) to the real Prisma-backed RefreshTokenService.
+  ],
   exports: [JwtAuthGuard, RolesGuard],
 })
 export class AuthModule {}

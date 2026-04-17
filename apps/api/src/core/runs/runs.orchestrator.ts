@@ -114,19 +114,14 @@ export class RunsOrchestrator implements IRunsOrchestrator {
     const junitKey = `${runId}/junit.xml`;
 
     try {
-      const pat = await this.crypto.decryptPat({
-        ciphertext: credential.ciphertext,
-        iv: credential.iv,
-        authTag: credential.auth_tag,
-        wrappedDek: credential.wrapped_dek,
-      });
-
-      const tarball = await this.github.archiveCommit(
-        pat,
+      // F7: the PAT lives in a Buffer, scoped to a single helper call. Both
+      // the PAT buffer and the tarball buffer are zeroed in a `finally` so
+      // the decrypted secret has a minimal memory lifetime.
+      const tarball = await this.decryptAndArchive(
+        credential,
         repo.github_url,
         commitSha,
       );
-      // PAT is a string (immutable) and will be GC'd; we drop the reference.
       let sizeBytes = 0;
       try {
         const upload = await this.storage.putObject({
@@ -364,6 +359,35 @@ export class RunsOrchestrator implements IRunsOrchestrator {
   ): Promise<void> {
     const key = userIdToLockKey(userId);
     await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${key})`);
+  }
+
+  /**
+   * F7 — PAT closure scope-down. Decrypts the PAT into a Buffer, hands it to
+   * `github.archiveCommit`, zeroes the Buffer on return, and hands the
+   * caller only the tarball. The PAT never escapes this method; the only
+   * thing the outer flow sees is the (soon-to-be-zeroed) tarball Buffer.
+   */
+  private async decryptAndArchive(
+    credential: {
+      ciphertext: Buffer;
+      iv: Buffer;
+      auth_tag: Buffer;
+      wrapped_dek: Buffer;
+    },
+    githubUrl: string,
+    commitSha: string,
+  ): Promise<Buffer> {
+    const pat = await this.crypto.decryptPatToBuffer({
+      ciphertext: credential.ciphertext,
+      iv: credential.iv,
+      authTag: credential.auth_tag,
+      wrappedDek: credential.wrapped_dek,
+    });
+    try {
+      return await this.github.archiveCommit(pat, githubUrl, commitSha);
+    } finally {
+      pat.fill(0);
+    }
   }
 }
 

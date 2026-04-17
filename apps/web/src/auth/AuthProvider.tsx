@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { components } from '@/src/api/generated/schema';
-import { api, API_BASE } from '@/src/api/client';
+import { api, logoutRemote, tryRefresh } from '@/src/api/client';
 import { tokenStore, type AuthTokens } from './token-store';
 import { USE_MOCKS, mockUser } from '@/src/api/mocks';
 
@@ -16,7 +16,7 @@ type AuthState = {
 
 type AuthCtx = AuthState & {
   setTokens: (t: AuthTokens) => void;
-  logout: () => void;
+  logout: () => Promise<void>;
   refreshMe: () => Promise<void>;
 };
 
@@ -25,29 +25,6 @@ const Ctx = createContext<AuthCtx | null>(null);
 function hasSessionCookie(): boolean {
   if (typeof document === 'undefined') return false;
   return document.cookie.split(';').some((c) => c.trim().startsWith('moulinator_session='));
-}
-
-async function tryBootstrapSession(): Promise<boolean> {
-  // If the session marker cookie is present but we have no in-memory token
-  // (typical after a page reload), attempt a refresh — production backend is
-  // expected to set a refresh token as an httpOnly cookie. If that fails, the
-  // marker cookie is stale and must be cleared so middleware stops trusting it.
-  if (!hasSessionCookie()) return false;
-  try {
-    const res = await fetch(`${API_BASE}/auth/refresh`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ refresh_token: '' }),
-    });
-    if (!res.ok) return false;
-    const body = (await res.json()) as AuthTokens;
-    if (!body?.access_token) return false;
-    tokenStore.setTokens(body);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -59,7 +36,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (USE_MOCKS) {
       // Mocks don't need a real session; synthesize an authenticated shell and
       // set the marker cookie so middleware lets protected routes render.
-      tokenStore.setTokens({ access_token: 'mock', refresh_token: 'mock', expires_in: 3600 });
+      tokenStore.setTokens({ access_token: 'mock', expires_in: 3600 });
       setUser(mockUser);
       setLoading(false);
       return;
@@ -67,7 +44,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const access = tokenStore.getAccessToken();
     if (!access) {
-      const bootstrapped = await tryBootstrapSession();
+      // Try to rehydrate via the httpOnly mou_rt cookie. If we have a session
+      // marker but the refresh fails, the marker is stale and must be cleared
+      // so middleware stops trusting it.
+      const bootstrapped = hasSessionCookie() ? await tryRefresh() : false;
       if (!bootstrapped) {
         tokenStore.clear();
         setUser(null);
@@ -113,7 +93,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       loading,
       error,
       setTokens: (t) => tokenStore.setTokens(t),
-      logout: () => {
+      logout: async () => {
+        await logoutRemote();
         tokenStore.clear();
         setUser(null);
       },

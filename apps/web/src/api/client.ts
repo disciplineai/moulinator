@@ -11,27 +11,30 @@ const API_BASE =
     ? process.env.NEXT_PUBLIC_API_URL || process.env.PUBLIC_API_URL || 'http://localhost:3001'
     : process.env.NEXT_PUBLIC_API_URL || '/api/proxy';
 
-const raw = createClient<paths>({ baseUrl: API_BASE });
+// credentials: 'include' so the httpOnly mou_rt cookie is attached/received on
+// /auth/* requests when the API is served cross-origin. Same-origin is fine too.
+const raw = createClient<paths>({ baseUrl: API_BASE, credentials: 'include' });
 
 let refreshInFlight: Promise<boolean> | null = null;
 
-async function tryRefresh(): Promise<boolean> {
+export async function tryRefresh(): Promise<boolean> {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
-    const refreshToken = tokenStore.getRefreshToken();
-    if (!refreshToken) return false;
     try {
+      // No body: the refresh token rides on the httpOnly `mou_rt` cookie.
+      // X-Moulinator-Refresh is a CSRF-lite header: browsers do not attach it
+      // on cross-origin simple requests, so drive-by refresh is blocked.
       const res = await fetch(`${API_BASE}/auth/refresh`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ refresh_token: refreshToken }),
+        credentials: 'include',
+        headers: { 'X-Moulinator-Refresh': '1' },
       });
       if (!res.ok) return false;
       const body = (await res.json()) as {
         access_token: string;
-        refresh_token: string;
         expires_in: number;
       };
+      if (!body?.access_token) return false;
       tokenStore.setTokens(body);
       return true;
     } catch {
@@ -41,6 +44,17 @@ async function tryRefresh(): Promise<boolean> {
     }
   })();
   return refreshInFlight;
+}
+
+export async function logoutRemote(): Promise<void> {
+  try {
+    await fetch(`${API_BASE}/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+  } catch {
+    // /auth/logout is idempotent; swallow network errors.
+  }
 }
 
 const authMiddleware: Middleware = {

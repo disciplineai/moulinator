@@ -1,14 +1,14 @@
 /**
- * In-memory access token + refresh token in httpOnly-friendly fallback.
- * Per CLAUDE.md: never store PATs or JWTs in localStorage. For MVP we keep
- * access in memory; refresh token is passed to the backend which is expected
- * to set it as an httpOnly cookie. When a browser reload happens and we only
- * have the cookie, the backend rotates a new access token via /auth/refresh.
+ * Access token lives in memory only. The refresh token is delivered by the
+ * backend as an httpOnly `mou_rt` cookie (scope path=/auth) and the browser
+ * attaches it automatically to /auth/refresh + /auth/logout when we call with
+ * `credentials: 'include'`. JS cannot read it — that's the whole point.
+ *
+ * Per CLAUDE.md: never store PATs or JWTs in localStorage.
  */
 
 export type AuthTokens = {
   access_token: string;
-  refresh_token: string;
   expires_in: number;
 };
 
@@ -26,10 +26,9 @@ export const tokenStore = {
     state = tokens;
     emit();
     if (typeof document !== 'undefined') {
-      // Session-scoped marker (no max-age): clears when the browser closes, so
-      // edge middleware does not keep granting access once the in-memory token
-      // is gone. Production sets the real refresh token as httpOnly on the
-      // backend; this cookie is only a client-side signal.
+      // Session-scoped marker so edge middleware can gate protected routes
+      // without reading the httpOnly refresh cookie. Clears on browser close;
+      // AuthProvider also clears it on refresh failure.
       document.cookie = 'moulinator_session=1; path=/; samesite=lax';
     }
   },
@@ -42,9 +41,6 @@ export const tokenStore = {
   },
   getAccessToken() {
     return state?.access_token ?? null;
-  },
-  getRefreshToken() {
-    return state?.refresh_token ?? null;
   },
   subscribe(fn: Listener) {
     listeners.add(fn);

@@ -17,7 +17,3 @@ export class LoginDto {
   password!: string;
 }
 
-export class RefreshDto {
-  @IsString()
-  refresh_token!: string;
-}

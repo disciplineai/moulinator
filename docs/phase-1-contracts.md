@@ -131,3 +131,56 @@ a hard contract with the web side — `openapi.yaml` remains the authority.
 
 Don't rename tokens. Adding fields to an interface is additive if
 optional; removing fields is a breaking change — coordinate first.
+
+## Phase 5 additions (2026-04-17)
+
+Three new DI tokens landed as part of the Phase 3 security review response:
+
+### `CREDENTIALS_SERVICE` → `ICredentialsService`
+
+Exposed by the `CredentialsModule` (Global, backend-crud) so the
+orchestrator can stamp `last_used_at` whenever it decrypts a PAT.
+
+```ts
+interface ICredentialsService {
+  markUsed(credentialId: Ulid): Promise<void>;
+}
+```
+
+`markUsed` is last-writer-wins — no row lock, no condition. It also
+writes an `credentials.used` audit entry. Safe to call concurrently.
+
+### `REFRESH_TOKEN_STORE` → `IRefreshTokenStore`
+
+Owned by backend-core (real implementation lives in
+`apps/api/src/core/auth/refresh-token.service.ts`), consumed by
+`AuthService` in backend-crud. Backs the cookie-based refresh flow.
+
+```ts
+interface IRefreshTokenStore {
+  issue(userId, ttlSeconds): Promise<IssuedRefreshToken>;
+  verify(token): Promise<VerifiedRefreshToken | null>;
+  rotate(oldJti, userId, ttlSeconds): Promise<IssuedRefreshToken>;
+  revoke(jti): Promise<void>;
+  revokeAllForUser(userId, reason): Promise<void>;
+}
+```
+
+`rotate` is the theft-detection hook: if the presented jti is already
+revoked, `rotate` MUST call `revokeAllForUser(userId, 'reuse_detected')`
+and throw — AuthService will surface that as a 401 and the user has to
+log in again. Backing table is `refresh_tokens` (see
+`prisma/schema.prisma`).
+
+Until backend-core lands the real service, `AuthModule` binds
+`StubRefreshTokenStore` at the same token — every mutating method
+throws `ServiceUnavailableException({ error: 'refresh_store_not_wired' })`
+so an unwired deploy fails loudly rather than silently issuing
+non-revocable tokens.
+
+### `ICryptoService.decryptPatToBuffer`
+
+Added by backend-core for F7 (PAT closure scope-down). Returns a mutable
+Buffer so callers can `buf.fill(0)` in a finally. Crud still uses the
+string-returning `decryptPat` in places where zeroing isn't required;
+the orchestrator uses the buffer variant.

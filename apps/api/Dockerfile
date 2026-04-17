@@ -30,12 +30,8 @@ COPY tsconfig.base.json ./
 COPY apps ./apps
 COPY packages ./packages
 
-# --shamefully-hoist materializes transitive deps at the top-level
-# node_modules so plain `require('express')` works after `pnpm deploy` —
-# Nest's platform-express needs this because express is a transitive dep,
-# not a direct one in apps/api/package.json.
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile --shamefully-hoist
+    pnpm install --frozen-lockfile
 
 
 # -------- build -------------------------------------------------------------
@@ -77,13 +73,16 @@ RUN apk add --no-cache tini openssl curl \
 
 # Copy the self-contained deploy tree (production deps + dist + package.json).
 COPY --from=build --chown=moulinator:moulinator /workspace/deploy-api/ ./
-# Prisma schema + generated client.
+# Prisma schema.
 COPY --from=build --chown=moulinator:moulinator /workspace/apps/api/prisma ./prisma
-# `pnpm --prod deploy` strips devDependencies — and prisma is usually in
-# devDependencies. Install the Prisma CLI as a root-owned global so we can
-# run migrations at container boot. npx without network would fail since
-# the runner doesn't have internet at runtime.
+# `pnpm --prod deploy` strips devDependencies and does NOT reproduce the
+# `node_modules/.prisma` symlink the dev tree has. Install the Prisma CLI
+# globally so we can (a) regenerate the client inside the production
+# node_modules layout at build time and (b) run `migrate deploy` at boot.
+# Regenerating at build time means the runtime container starts with no
+# network dependency on npmjs or the Prisma binary CDN.
 RUN npm install --no-save --global prisma@5.22.0 \
+ && prisma generate --schema=./prisma/schema.prisma \
  && chown -R moulinator:moulinator /app
 
 USER moulinator

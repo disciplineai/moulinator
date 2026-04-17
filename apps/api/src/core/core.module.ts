@@ -4,6 +4,7 @@ import {
   CRYPTO_SERVICE,
   GITHUB_CLIENT,
   JENKINS_WEBHOOK_SERVICE,
+  REFRESH_TOKEN_STORE,
   RUNS_ORCHESTRATOR,
   STORAGE_SERVICE,
 } from '@moulinator/api-core-contracts';
@@ -13,6 +14,7 @@ import { StorageModule } from './storage/storage.module';
 import { JenkinsModule } from './jenkins/jenkins.module';
 import { AuditModule } from './audit/audit.module';
 import { RunsCoreModule } from './runs/runs-core.module';
+import { RefreshTokenModule } from './auth/refresh-token.module';
 import { JenkinsWebhookModule } from '../webhooks/jenkins/jenkins-webhook.module';
 
 /**
@@ -29,6 +31,7 @@ import { JenkinsWebhookModule } from '../webhooks/jenkins/jenkins-webhook.module
     JenkinsModule,
     AuditModule,
     RunsCoreModule,
+    RefreshTokenModule,
     JenkinsWebhookModule,
   ],
   exports: [
@@ -38,6 +41,7 @@ import { JenkinsWebhookModule } from '../webhooks/jenkins/jenkins-webhook.module
     JenkinsModule,
     AuditModule,
     RunsCoreModule,
+    RefreshTokenModule,
     JenkinsWebhookModule,
   ],
 })
@@ -50,5 +54,6 @@ export class CoreModule {
     AUDIT_SERVICE,
     RUNS_ORCHESTRATOR,
     JENKINS_WEBHOOK_SERVICE,
+    REFRESH_TOKEN_STORE,
   };
 }

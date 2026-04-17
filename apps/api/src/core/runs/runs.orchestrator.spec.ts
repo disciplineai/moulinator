@@ -88,6 +88,9 @@ function makeOrch(overrides: {
   const prisma = overrides.prisma ?? new PrismaMock();
   const crypto = overrides.crypto ?? {
     decryptPat: jest.fn(async () => 'ghp_decrypted'),
+    decryptPatToBuffer: jest.fn(async () =>
+      Buffer.from('ghp_decrypted', 'utf8'),
+    ),
   };
   const github = overrides.github ?? {
     archiveCommit: jest.fn(async () => Buffer.from('tarball')),
@@ -145,7 +148,19 @@ function makeOrch(overrides: {
 
 describe('RunsOrchestrator.triggerRun', () => {
   it('creates a queued run, archives, uploads, triggers, returns result', async () => {
-    const { orch, prisma, jenkins, github, storage } = makeOrch();
+    let observedPatAtCallTime: string | null = null;
+    const github = {
+      archiveCommit: jest.fn(
+        async (pat: Buffer, _url: string, _sha: string) => {
+          // Snapshot the PAT bytes the moment archiveCommit is invoked, so
+          // we can later assert (a) archiveCommit did see the plaintext,
+          // (b) the outer orchestrator zeroed the buffer afterwards.
+          observedPatAtCallTime = Buffer.from(pat).toString('utf8');
+          return Buffer.from('tarball');
+        },
+      ),
+    };
+    const { orch, prisma, jenkins, storage } = makeOrch({ github });
     prisma.repositories.set('repo-1', {
       id: 'repo-1',
       user_id: 'user-1',
@@ -190,13 +205,18 @@ describe('RunsOrchestrator.triggerRun', () => {
         testsCommitSha: 'f'.repeat(40),
       }),
     );
-    expect(github.archiveCommit).toHaveBeenCalledWith(
-      'ghp_decrypted',
-      'https://github.com/u/w',
-      'a'.repeat(40),
-    );
+    // F7: archiveCommit received the plaintext PAT (as a Buffer) at call time.
+    expect(observedPatAtCallTime).toBe('ghp_decrypted');
+    const [patArg, urlArg, shaArg] = (github.archiveCommit as jest.Mock).mock
+      .calls[0];
+    expect(Buffer.isBuffer(patArg)).toBe(true);
+    expect(urlArg).toBe('https://github.com/u/w');
+    expect(shaArg).toBe('a'.repeat(40));
     expect(storage.putObject).toHaveBeenCalled();
     expect(prisma.artifacts).toHaveLength(1);
+    // F7 — AFTER archiveCommit returns, the orchestrator zeros the PAT buffer
+    // so a post-mortem heap snapshot cannot read it.
+    expect((patArg as Buffer).every((b) => b === 0)).toBe(true);
   });
 
   it('rejects when a non-terminal run already exists (429)', async () => {
