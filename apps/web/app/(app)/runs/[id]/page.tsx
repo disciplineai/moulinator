@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { use, useState } from 'react';
+import { useState } from 'react';
 import { Rule } from '@/components/ui/Rule';
 import { Button } from '@/components/ui/Button';
 import { StatusBadge, TestCaseBadge } from '@/components/ui/StatusBadge';
@@ -11,8 +11,8 @@ import { api, errorMessage } from '@/src/api/client';
 import { toast } from '@/components/ui/toast';
 import { fmtBytes, fmtDuration, relTime, shortDigest, shortSha } from '@/src/format';
 
-export default function RunDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+export default function RunDetailPage({ params }: { params: { id: string } }) {
+  const { id } = params;
   const run = useRun(id, true);
   const status = run.data?.status;
   const results = useRunResults(id, status);

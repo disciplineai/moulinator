@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { use, useState } from 'react';
+import { useState } from 'react';
 import { Rule } from '@/components/ui/Rule';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -15,8 +15,8 @@ import { toast } from '@/components/ui/toast';
 import { relTime, repoName, shortSha } from '@/src/format';
 import { useRouter } from 'next/navigation';
 
-export default function RepoDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+export default function RepoDetailPage({ params }: { params: { id: string } }) {
+  const { id } = params;
   const router = useRouter();
   const repo = useRepo(id);
   const runs = useRepoRuns(id);
