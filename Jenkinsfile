@@ -355,6 +355,9 @@ pipeline {
                 "$M_IMAGE_REF" \
                 sh -c 'timeout -s TERM "$MOULINATOR_TIMEOUT" bash "/work/tests/$MOULINATOR_SLUG/$MOULINATOR_HARNESS"' \
                 > "$M_FULL_LOG" 2>&1
+              _DKRC=$?
+              cat "$M_FULL_LOG" >&2
+              exit $_DKRC
             ''')
             env.HARNESS_EXIT = rc.toString()
           }
