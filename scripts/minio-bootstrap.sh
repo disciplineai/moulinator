@@ -71,12 +71,12 @@ cat > /tmp/moulinator-app.json <<POLICY
 }
 POLICY
 
-mc admin policy create local moulinator-app /tmp/moulinator-app.json \
-  || mc admin policy update local moulinator-app /tmp/moulinator-app.json
+mc admin policy rm local moulinator-app 2>/dev/null || true
+mc admin policy create local moulinator-app /tmp/moulinator-app.json
 
 # --- scoped user + attach policy --------------------------------------------
-mc admin user add      local "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" \
-  || mc admin user password local "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
+mc admin user add local "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" 2>/dev/null \
+  || mc admin user passwd local "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
 
 mc admin policy attach local moulinator-app --user "$MINIO_ACCESS_KEY" || true
 
