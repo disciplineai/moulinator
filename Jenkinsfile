@@ -282,8 +282,9 @@ pipeline {
     stage('run harness') {
       steps {
         script {
-          // Prepare result dir ahead of mount.
-          sh 'mkdir -p "$OUT_DIR" && chmod 0777 "$OUT_DIR"'
+          // Prepare result dir and make source dir writable so make can
+          // create .o files (UID 2000 inside container, jenkins owns the dir).
+          sh 'mkdir -p "$OUT_DIR" && chmod 0777 "$OUT_DIR" && chmod -R o+w "$WORKSPACE_DIR"'
         }
         // IMPORTANT: docker args are passed as arrayed CLI arguments via env
         // vars, not concatenated into a shell string. This denies shell
@@ -342,11 +343,11 @@ pipeline {
                 --memory-swap "${M_MEM}m" \
                 --cpus "$M_CPUS" \
                 --read-only \
-                --tmpfs "/work:rw,size=${M_MEM}m,mode=1777,nosuid,nodev" \
+                --tmpfs /tmp:rw,size=256m,mode=1777,nosuid,nodev \
                 --cap-drop ALL \
                 --security-opt no-new-privileges \
                 --user 2000:2000 \
-                -v "${M_WORKSPACE_DIR}:/work/src:ro" \
+                -v "${M_WORKSPACE_DIR}:/work/src:rw" \
                 -v "${M_TESTS_CLONE_DIR}:/work/tests:ro" \
                 -v "${M_OUT_DIR}:/work/out:rw" \
                 -e "MOULINATOR_SLUG=$M_SLUG" \
@@ -357,7 +358,7 @@ pipeline {
                 -e MOULINATOR_FULL_LOG=/work/out/full.log \
                 --entrypoint sh \
                 "$M_IMAGE_REF" \
-                -c 'echo "=== /work/tests ==="; ls /work/tests/ 2>&1 || true; echo "=== slug dir ==="; ls "/work/tests/$MOULINATOR_SLUG/" 2>&1 || true; bash "/work/tests/$MOULINATOR_SLUG/$MOULINATOR_HARNESS"' \
+                -c 'bash "/work/tests/$MOULINATOR_SLUG/$MOULINATOR_HARNESS"' \
                 > "$M_FULL_LOG" 2>&1 &
               _DK_PID=$!
               # Killer: force-remove the container after timeout so docker run exits.
