@@ -8,18 +8,14 @@
 #   - The webhook-HMAC secret registered as a "Secret text" credential the
 #     pipeline looks up via `withCredentials(credentialsId: 'jenkins-webhook-secret')`.
 #
-# This file is mounted read-only into /var/jenkins_home/jenkins.yaml and the
-# configuration-as-code plugin is set up via the installed-plugins.txt list.
+# Baked into the image at /etc/jenkins/casc/jenkins.yaml (outside the
+# jenkins_home volume so rebuilds always pick up changes).
 
 jenkins:
   systemMessage: "Moulinator controller — managed via JCasC"
   numExecutors: 0                  # controller runs no jobs itself
   mode: EXCLUSIVE
-  remotingSecurity:
-    enabled: true
   slaveAgentPort: 50000
-  agentProtocols:
-    - "JNLP4-connect"
 
   securityRealm:
     local:
