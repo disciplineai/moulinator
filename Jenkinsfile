@@ -284,7 +284,11 @@ pipeline {
         script {
           // Prepare result dir and make source dir writable so make can
           // create .o files (UID 2000 inside container, jenkins owns the dir).
-          sh 'mkdir -p "$OUT_DIR" && chmod 0777 "$OUT_DIR" && chmod -R o+w "$WORKSPACE_DIR"'
+          sh '''
+            mkdir -p "$OUT_DIR" && chmod 0777 "$OUT_DIR" && chmod -R o+w "$WORKSPACE_DIR"
+            echo "=== AGENT: tests-repo root ===" && ls "$TESTS_CLONE_DIR/" || true
+            echo "=== AGENT: my-teams dir ===" && ls "$TESTS_CLONE_DIR/my-teams/" 2>/dev/null || echo "my-teams not found"
+          '''
         }
         // IMPORTANT: docker args are passed as arrayed CLI arguments via env
         // vars, not concatenated into a shell string. This denies shell
@@ -342,7 +346,6 @@ pipeline {
                 --memory "${M_MEM}m" \
                 --memory-swap "${M_MEM}m" \
                 --cpus "$M_CPUS" \
-                --read-only \
                 --tmpfs /tmp:rw,size=256m,mode=1777,nosuid,nodev \
                 --cap-drop ALL \
                 --security-opt no-new-privileges \
