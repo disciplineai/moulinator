@@ -353,7 +353,7 @@ pipeline {
                 -e MOULINATOR_JUNIT_XML=/work/out/junit.xml \
                 -e MOULINATOR_FULL_LOG=/work/out/full.log \
                 "$M_IMAGE_REF" \
-                'timeout -s TERM "$MOULINATOR_TIMEOUT" /bin/sh "/work/tests/$MOULINATOR_SLUG/$MOULINATOR_HARNESS"' \
+                sh -c 'timeout -s TERM "$MOULINATOR_TIMEOUT" /bin/sh "/work/tests/$MOULINATOR_SLUG/$MOULINATOR_HARNESS"' \
                 > "$M_FULL_LOG" 2>&1
             ''')
             env.HARNESS_EXIT = rc.toString()
