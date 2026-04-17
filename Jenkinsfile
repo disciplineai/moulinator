@@ -267,7 +267,7 @@ pipeline {
               exit 1
             fi
 
-            git -C "$M_TESTS_CLONE_DIR" checkout --detach -- "$M_TESTS_COMMIT_SHA"
+            git -C "$M_TESTS_CLONE_DIR" checkout --detach "$M_TESTS_COMMIT_SHA"
             actual=$(git -C "$M_TESTS_CLONE_DIR" rev-parse HEAD)
             if [ "$actual" != "$M_TESTS_COMMIT_SHA" ]; then
               echo "tests-repo pin mismatch: expected $M_TESTS_COMMIT_SHA, got $actual" >&2
