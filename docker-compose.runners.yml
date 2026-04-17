@@ -90,6 +90,9 @@ services:
       # TOFU and the pipeline refuses to run.
       - ${TESTS_REPO_DEPLOY_KEY_PATH}:${TESTS_REPO_DEPLOY_KEY_PATH}:ro
       - ${TESTS_REPO_KNOWN_HOSTS_PATH}:${TESTS_REPO_KNOWN_HOSTS_PATH}:ro
+    depends_on:
+      firewall-sidecar:
+        condition: service_healthy
     group_add:
       - "${DOCKER_GID:-999}"
     networks:

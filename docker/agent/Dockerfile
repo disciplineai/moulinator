@@ -21,6 +21,7 @@ RUN apt-get update \
       openssl \
       socat \
       docker.io \
+      procps \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 USER jenkins
