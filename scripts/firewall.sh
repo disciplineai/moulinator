@@ -221,8 +221,8 @@ log "listening on $SOCK"
 
 # EXEC: reruns this script with __handle; each connection gets its own child
 # but each child parses and dispatches in pure shell — no inherited-function
-# assumption. umask 0117 keeps the socket at 0660.
-umask 0117
+# assumption. mode=0666 lets the Jenkins agent (different uid) connect; the
+# socket is only reachable inside the shared docker volume, not on the host.
 exec socat -T 10 \
-  UNIX-LISTEN:"$SOCK",reuseaddr,fork,mode=0660 \
+  UNIX-LISTEN:"$SOCK",reuseaddr,fork,mode=0666 \
   EXEC:"$0 __handle"
