@@ -72,9 +72,9 @@ pipeline {
     RESULT_JSON     = "${env.WORKSPACE}/result.json"
     FULL_LOG        = "${env.WORKSPACE}/full.log"
     JUNIT_XML       = "${env.WORKSPACE}/junit.xml"
-    // Sidecar socket is exposed on the shared `jenkins_agent_home` volume,
-    // mounted at JENKINS_AGENT_WORKDIR inside the agent. See compose file.
-    FIREWALL_SOCK   = "${env.JENKINS_AGENT_WORKDIR ?: '/home/jenkins/agent'}/firewall.sock"
+    // Firewall sidecar socket path inside the agent. The firewall_socket named
+    // volume is mounted at /home/jenkins/firewall-sock (see docker-compose.runners.yml).
+    FIREWALL_SOCK   = "/home/jenkins/firewall-sock/firewall.sock"
   }
 
   stages {
@@ -286,8 +286,6 @@ pipeline {
           // create .o files (UID 2000 inside container, jenkins owns the dir).
           sh '''
             mkdir -p "$OUT_DIR" && chmod 0777 "$OUT_DIR" && chmod -R o+w "$WORKSPACE_DIR"
-            echo "=== AGENT: tests-repo root ===" && ls "$TESTS_CLONE_DIR/" || true
-            echo "=== AGENT: my-teams dir ===" && ls "$TESTS_CLONE_DIR/my-teams/" 2>/dev/null || echo "my-teams not found"
           '''
         }
         // IMPORTANT: docker args are passed as arrayed CLI arguments via env
@@ -326,19 +324,32 @@ pipeline {
                 (*[!A-Za-z0-9._/-]*)  echo "harness_entrypoint has illegal chars" >&2; exit 1 ;;
               esac
 
-              # Pass slug + harness path as env vars INTO the container, and
-              # invoke sh -c with a fixed script that references them — so the
-              # image entrypoint sees `$SLUG` / `$HARNESS`, never a literal
-              # command string assembled from user input.
+              # DooD path translation: the agent workspace lives on a host bind
+              # mount at HOST_AGENT_WORKDIR (host FS) mapped to JENKINS_AGENT_WORKDIR
+              # (container FS). `docker run` goes through /var/run/docker.sock to the
+              # host daemon, which resolves bind mount sources on the HOST FS — so we
+              # must pass host paths, not container-internal paths.
+              case "${HOST_AGENT_WORKDIR:-}" in
+                /*) : ;;
+                '') echo "HOST_AGENT_WORKDIR is not set — cannot resolve host paths for bind mounts" >&2; exit 1 ;;
+                *)  echo "HOST_AGENT_WORKDIR must be absolute (got: $HOST_AGENT_WORKDIR)" >&2; exit 1 ;;
+              esac
+              _container_base="${JENKINS_AGENT_WORKDIR:-/home/jenkins/agent}"
+              case "$WORKSPACE" in
+                "${_container_base}/"*) : ;;
+                *) echo "WORKSPACE ($WORKSPACE) is not under JENKINS_AGENT_WORKDIR ($JENKINS_AGENT_WORKDIR)" >&2; exit 1 ;;
+              esac
+              _rel="${WORKSPACE#${_container_base}}"
+              _host_ws="${HOST_AGENT_WORKDIR}${_rel}"
+
+              # --mount type=bind fails immediately if the source path does not
+              # exist on the host, rather than silently creating an empty dir
+              # like -v does. This gives a loud failure on misconfiguration.
               #
-              # F12: /work is tmpfs with `nosuid,nodev`. `noexec` is NOT set
-              # because C projects compile student code into /work and then
-              # exec the resulting binaries; noexec would break that path.
-              # nosuid + nodev are safe invariants regardless of language
-              # (no setuid binaries, no device files in a scratch workspace).
-              # Run container in background so the outer shell (which has
-              # timeout(1)) can enforce the wall-clock limit. The runner image
-              # is not guaranteed to ship timeout(1) itself.
+              # Run container in background so the outer shell can enforce the
+              # wall-clock timeout. The runner image is not guaranteed to ship
+              # timeout(1), so the killer subshell removes the container when
+              # the deadline fires, which makes docker run exit.
               docker run --rm \
                 --name "$M_CONTAINER" \
                 --network "$M_NETWORK" \
@@ -350,9 +361,9 @@ pipeline {
                 --cap-drop ALL \
                 --security-opt no-new-privileges \
                 --user 2000:2000 \
-                -v "${M_WORKSPACE_DIR}:/work/src:rw" \
-                -v "${M_TESTS_CLONE_DIR}:/work/tests:ro" \
-                -v "${M_OUT_DIR}:/work/out:rw" \
+                --mount "type=bind,source=${_host_ws}/build,target=/work/src" \
+                --mount "type=bind,source=${_host_ws}/tests-repo,target=/work/tests,readonly" \
+                --mount "type=bind,source=${_host_ws}/out,target=/work/out" \
                 -e "MOULINATOR_SLUG=$M_SLUG" \
                 -e "MOULINATOR_HARNESS=$M_HARNESS" \
                 -e "MOULINATOR_TIMEOUT=$M_TIMEOUT" \
@@ -367,7 +378,7 @@ pipeline {
               # Killer: force-remove the container after timeout so docker run exits.
               ( sleep "$M_TIMEOUT" && docker rm -f "$M_CONTAINER" >/dev/null 2>&1 ) &
               _KILL_PID=$!
-              wait "$_DK_PID" || true
+              wait "$_DK_PID"
               _DKRC=$?
               kill "$_KILL_PID" 2>/dev/null || true
               wait "$_KILL_PID" 2>/dev/null || true

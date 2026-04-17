@@ -29,8 +29,11 @@ Two physical planes, separated by a firewall. Untrusted code never runs on the c
 │                                                          │
 │  Jenkins agent ──▶ Docker (per-project hermetic images)  │
 │                     • --pids-limit / --memory / --cpus   │
-│                     • read-only credential-free workspace│
-│                     • no docker socket, no host mounts   │
+│                     • credential-free workspace          │
+│                     • no docker socket                   │
+│                     • workspace subpaths bound from host │
+│                       (DooD — /work/src, /work/tests,    │
+│                        /work/out only; no general access)│
 │                     • egress only per firewall table §3  │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -143,9 +146,10 @@ Governance:
   - `--pids-limit 512`
   - `--memory 2g`
   - `--cpus 2`
-  - `--read-only` with a tmpfs workspace
+  - `--cap-drop ALL --security-opt no-new-privileges --user 2000:2000`
+  - `/tmp` on tmpfs; `/work/src`, `/work/tests`, `/work/out` bound from the agent's host workdir (DooD — these are per-build disposable paths only)
   - `--network` attached to a dedicated Docker network whose egress is filtered per project
-  - wall-clock timeout via `timeout` command wrapping the harness
+  - wall-clock timeout enforced by an external killer subshell (`docker rm -f`) since `timeout(1)` is not guaranteed in runner images
 
 ### 5.5 MinIO
 

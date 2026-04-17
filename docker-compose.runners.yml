@@ -34,10 +34,10 @@ networks:
     driver: bridge
 
 volumes:
-  # Shared volume between agent + sidecar. The agent workdir lives here AND
-  # the sidecar exposes the firewall.sock here. Path inside agent matches
-  # JENKINS_AGENT_WORKDIR; path inside sidecar is /shared.
-  jenkins_agent_home:
+  # Socket-only IPC volume. Keeps firewall.sock off the host filesystem so
+  # no local process can send unauthenticated iptables commands to the sidecar.
+  # The agent mounts this at /home/jenkins/firewall-sock; the sidecar at /shared.
+  firewall_socket:
 
 services:
 
@@ -69,9 +69,20 @@ services:
       TESTS_REPO_DEPLOY_KEY_PATH: ${TESTS_REPO_DEPLOY_KEY_PATH}
       TESTS_REPO_KNOWN_HOSTS_PATH: ${TESTS_REPO_KNOWN_HOSTS_PATH}
       HEARTBEAT_INTERVAL_SECONDS: ${HEARTBEAT_INTERVAL_SECONDS}
+      # HOST_AGENT_WORKDIR must be the absolute host-FS path that maps to
+      # JENKINS_AGENT_WORKDIR inside the container. Exposed to the Jenkinsfile
+      # so it can translate container-internal paths to host paths for nested
+      # `docker run` bind mounts (DooD requires host-resolvable paths).
+      HOST_AGENT_WORKDIR: ${HOST_AGENT_WORKDIR}
     volumes:
-      # Agent workdir — ALSO where the firewall socket is exposed (see sidecar).
-      - jenkins_agent_home:${JENKINS_AGENT_WORKDIR}
+      # Agent workdir — host bind mount so nested docker run (DooD) can
+      # reference the same path on the host FS. The operator must pre-create
+      # HOST_AGENT_WORKDIR with jenkins UID 1000 ownership:
+      #   mkdir -p $HOST_AGENT_WORKDIR && chown 1000:1000 $HOST_AGENT_WORKDIR && chmod 750 $HOST_AGENT_WORKDIR
+      - ${HOST_AGENT_WORKDIR}:${JENKINS_AGENT_WORKDIR}
+      # Firewall IPC socket — named volume, never touches host FS. The sidecar
+      # writes /shared/firewall.sock; the agent reads it at /home/jenkins/firewall-sock/firewall.sock.
+      - firewall_socket:/home/jenkins/firewall-sock
       # Docker socket for `docker run` of job containers. Agent only.
       - /var/run/docker.sock:/var/run/docker.sock
       # Deploy key + pinned known_hosts for tests-repo, read-only. Managed by
@@ -109,10 +120,9 @@ services:
       # Socket path INSIDE the sidecar container.
       SOCK: /shared/firewall.sock
     volumes:
-      # SAME volume as the agent but mounted at /shared. The agent sees the
-      # socket at ${JENKINS_AGENT_WORKDIR}/firewall.sock, matching the path
-      # the Jenkinsfile computes.
-      - jenkins_agent_home:/shared
+      # Same socket volume as the agent — sidecar writes /shared/firewall.sock,
+      # agent reads it at /home/jenkins/firewall-sock/firewall.sock.
+      - firewall_socket:/shared
       # Read-only docker socket so `docker network inspect` works.
       - /var/run/docker.sock:/var/run/docker.sock:ro
     healthcheck:

@@ -25,6 +25,10 @@ env:
   - { name: JENKINS_AGENT_NAME,         required: true,  description: "Matches node name on controller" }
   - { name: JENKINS_AGENT_SECRET,       required: true,  secret: true }
   - { name: JENKINS_AGENT_WORKDIR,      required: true,  default: /home/jenkins/agent }
+  # Absolute host-FS path mapped to JENKINS_AGENT_WORKDIR inside the agent container.
+  # Required for DooD: nested docker run bind mounts must resolve on the host FS.
+  # Pre-create on host B: mkdir -p $val && chown 1000:1000 $val && chmod 750 $val
+  - { name: HOST_AGENT_WORKDIR,         required: true,  default: /opt/moulinator/jenkins-agent }
 
   # MinIO — used by the pipeline to download workspaces + upload logs.
   - { name: MINIO_PUBLIC_ENDPOINT,      required: true,  description: "Same URL as control plane exposes publicly" }
@@ -51,7 +55,8 @@ secrets:
   - { name: tests_repo_known_hosts,  target: "${TESTS_REPO_KNOWN_HOSTS_PATH}",  mode: "0444" }
 
 volumes:
-  - jenkins_agent_home
+  # Socket-only IPC volume — firewall.sock never touches the host FS.
+  - firewall_socket
 
 # Runner plane never publishes ports — all traffic is outbound to control plane.
 published_ports: []
