@@ -22,8 +22,7 @@ USER jenkins
 COPY plugins.txt /usr/share/jenkins/ref/plugins.txt
 RUN jenkins-plugin-cli --plugin-file /usr/share/jenkins/ref/plugins.txt
 
-COPY jenkins.yaml /var/jenkins_home/jenkins.yaml
+COPY jenkins.yaml /etc/jenkins/casc/jenkins.yaml
 
-# Point CasC at our mounted config file.
-ENV CASC_JENKINS_CONFIG=/var/jenkins_home/jenkins.yaml \
+ENV CASC_JENKINS_CONFIG=/etc/jenkins/casc/jenkins.yaml \
     JAVA_OPTS="-Djenkins.install.runSetupWizard=false"
