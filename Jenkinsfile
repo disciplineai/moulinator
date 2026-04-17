@@ -618,7 +618,7 @@ def emitWebhook(String event, Map payload) {
               ;;
             *)
               # 5xx or network error: backoff and retry with same idempotency key.
-              sleep $((2 ** attempt))
+              delay=1; i=0; while [ $i -lt $attempt ]; do delay=$((delay * 2)); i=$((i + 1)); done; sleep $delay
               ;;
           esac
         done
