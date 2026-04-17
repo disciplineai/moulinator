@@ -144,7 +144,7 @@ pipeline {
             hermetic:  params.hermetic,
             allowlist: new groovy.json.JsonSlurper().parseText(params.egress_allowlist_json ?: '[]')
           ]
-          writeFile file: 'firewall-req.json', text: groovy.json.JsonOutput.toJson(payload)
+          writeFile file: 'firewall-req.json', text: groovy.json.JsonOutput.toJson(payload) + '\n'
           withEnv(["M_SOCK=${env.FIREWALL_SOCK}"]) {
             sh '''
               set -eu

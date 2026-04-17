@@ -210,8 +210,9 @@ handle_line() {
 
 if [ "${1:-}" = "__handle" ]; then
   # Read one newline-delimited JSON line from stdin and dispatch.
-  IFS= read -r _line || exit 0
-  [ -z "$_line" ] && exit 0
+  # `read` returns non-zero on EOF-without-newline but still fills _line,
+  # so don't short-circuit on failure — only skip if the line is empty.
+  IFS= read -r _line; [ -z "$_line" ] && exit 0
   handle_line "$_line"
   exit 0
 fi
