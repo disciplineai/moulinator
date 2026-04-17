@@ -3,12 +3,19 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
+import * as express from 'express';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/http-exception.filter';
 import { StorageService } from './core/storage/storage.service';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create(AppModule, { bufferLogs: true, bodyParser: false });
+  // Apply JSON body parser to all routes except /webhooks/jenkins, which
+  // uses JenkinsRawBodyMiddleware to capture the raw bytes for HMAC verification.
+  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (req.path.startsWith('/webhooks/jenkins')) return next();
+    express.json({ limit: '10mb' })(req, res, next);
+  });
   const logger = new Logger('Bootstrap');
 
   app.use(helmet());
