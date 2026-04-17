@@ -357,7 +357,7 @@ pipeline {
                 -e MOULINATOR_FULL_LOG=/work/out/full.log \
                 --entrypoint sh \
                 "$M_IMAGE_REF" \
-                -c 'bash "/work/tests/$MOULINATOR_SLUG/$MOULINATOR_HARNESS"' \
+                -c 'echo "=== /work/tests ==="; ls /work/tests/ 2>&1 || true; echo "=== slug dir ==="; ls "/work/tests/$MOULINATOR_SLUG/" 2>&1 || true; bash "/work/tests/$MOULINATOR_SLUG/$MOULINATOR_HARNESS"' \
                 > "$M_FULL_LOG" 2>&1 &
               _DK_PID=$!
               # Killer: force-remove the container after timeout so docker run exits.
