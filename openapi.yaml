@@ -1,0 +1,614 @@
+openapi: 3.1.0
+info:
+  title: Moulinator API
+  version: 0.1.0
+  description: |
+    REST contract between the NestJS backend and the NextJS frontend.
+    This file is the source of truth for both sides; build agents generate
+    typed clients from here and validate controllers against it.
+
+servers:
+  - url: http://localhost:3001
+    description: Local dev
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/signup:
+    post:
+      summary: Create an account
+      security: []
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignupRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthTokens" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /auth/login:
+    post:
+      summary: Login
+      security: []
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthTokens" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /auth/refresh:
+    post:
+      summary: Exchange refresh token for new access token
+      security: []
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthTokens" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me:
+    get:
+      summary: Current user
+      tags: [users]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+
+  /me/credentials:
+    get:
+      summary: List PAT metadata for current user
+      tags: [credentials]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/GithubCredentialMeta" }
+    post:
+      summary: Add a PAT
+      description: The PAT is validated against GitHub before storage. It is never returned after this call.
+      tags: [credentials]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, writeOnly: true }
+                label: { type: string, maxLength: 64 }
+      responses:
+        "201":
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GithubCredentialMeta" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /me/credentials/{id}:
+    delete:
+      summary: Delete a PAT
+      tags: [credentials]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: ulid } }
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /projects:
+    get:
+      summary: List available project definitions
+      tags: [projects]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ProjectDefinition" }
+
+  /repos:
+    get:
+      summary: List repositories for current user
+      tags: [repos]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepoList" }
+    post:
+      summary: Register a repository
+      tags: [repos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RepoCreate" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Repo" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /repos/{id}:
+    get:
+      summary: Get a repository
+      tags: [repos]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: ulid } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Repo" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Delete a repository
+      tags: [repos]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: ulid } }
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /repos/{id}/runs:
+    get:
+      summary: List runs for a repository
+      tags: [runs]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: ulid } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunList" }
+
+  /runs:
+    post:
+      summary: Trigger a run
+      tags: [runs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RunCreate" }
+      responses:
+        "201":
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /runs/{id}:
+    get:
+      summary: Get a run
+      tags: [runs]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: ulid } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Cancel a run
+      tags: [runs]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: ulid } }
+      responses:
+        "204": { description: Cancelled }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Run already terminal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /runs/{id}/results:
+    get:
+      summary: Test case results for a run
+      tags: [runs]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: ulid } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TestCaseResult" }
+
+  /runs/{id}/artifacts:
+    get:
+      summary: Artifact pointers for a run (logs, junit, etc.)
+      tags: [artifacts]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: ulid } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/BuildArtifact" }
+
+  /artifacts/{id}/url:
+    get:
+      summary: Issue a short-lived presigned GET URL for an artifact
+      tags: [artifacts]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: ulid } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, expires_at]
+                properties:
+                  url: { type: string, format: uri }
+                  expires_at: { type: string, format: date-time }
+
+  /contributions:
+    get:
+      summary: List test contributions (PRs on tests-repo)
+      tags: [contributions]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, merged, rejected] } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TestContribution" }
+    post:
+      summary: Register a new test-contribution PR
+      tags: [contributions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_slug, github_pr_url]
+              properties:
+                project_slug: { type: string }
+                github_pr_url: { type: string, format: uri }
+      responses:
+        "201":
+          description: Registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TestContribution" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /webhooks/jenkins:
+    post:
+      summary: Jenkins → API webhook
+      description: See docs/webhook-contract.md. HMAC-verified, idempotency-keyed.
+      security: []
+      tags: [webhooks]
+      parameters:
+        - { name: X-Moulinator-Signature, in: header, required: true, schema: { type: string } }
+        - { name: X-Moulinator-Idempotency-Key, in: header, required: true, schema: { type: string, format: uuid } }
+        - { name: X-Moulinator-Event, in: header, required: true, schema: { type: string, enum: [build_started, heartbeat, build_completed, build_errored] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - { $ref: "#/components/schemas/BuildStartedEvent" }
+                - { $ref: "#/components/schemas/HeartbeatEvent" }
+                - { $ref: "#/components/schemas/BuildCompletedEvent" }
+                - { $ref: "#/components/schemas/BuildErroredEvent" }
+      responses:
+        "200": { description: Processed }
+        "202": { description: Queued }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Duplicate idempotency key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "410":
+          description: Run already terminal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid credentials
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    NotFound:
+      description: Not found
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Conflict:
+      description: Conflict
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Unprocessable:
+      description: Validation error
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    RateLimited:
+      description: Too many requests
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string, description: Machine code, e.g. "pat_invalid" }
+        message: { type: string }
+        details:
+          type: object
+          additionalProperties: true
+
+    SignupRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 10, writeOnly: true }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, writeOnly: true }
+
+    AuthTokens:
+      type: object
+      required: [access_token, refresh_token, expires_in]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer, description: Seconds }
+
+    User:
+      type: object
+      required: [id, email, role, created_at]
+      properties:
+        id: { type: string, format: ulid }
+        email: { type: string, format: email }
+        role: { type: string, enum: [student, moderator, admin] }
+        created_at: { type: string, format: date-time }
+
+    GithubCredentialMeta:
+      type: object
+      required: [id, label, scopes, created_at]
+      properties:
+        id: { type: string, format: ulid }
+        label: { type: string }
+        scopes:
+          type: array
+          items: { type: string }
+        last_used_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    ProjectDefinition:
+      type: object
+      required: [id, slug, name, language, hermetic]
+      properties:
+        id: { type: string, format: ulid }
+        slug: { type: string }
+        name: { type: string }
+        language: { type: string, enum: [c, cpp, python, bash, haskell] }
+        tests_path: { type: string }
+        hermetic: { type: boolean }
+        runner_image_digest: { type: string }
+
+    Repo:
+      type: object
+      required: [id, project_id, github_url, default_branch, created_at]
+      properties:
+        id: { type: string, format: ulid }
+        project_id: { type: string, format: ulid }
+        github_url: { type: string, format: uri }
+        default_branch: { type: string }
+        created_at: { type: string, format: date-time }
+
+    RepoCreate:
+      type: object
+      required: [project_id, github_url]
+      properties:
+        project_id: { type: string, format: ulid }
+        github_url: { type: string, format: uri }
+        default_branch: { type: string, default: main }
+
+    RepoList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Repo" }
+        next_cursor: { type: string, nullable: true }
+
+    RunCreate:
+      type: object
+      required: [repo_id, commit_sha]
+      properties:
+        repo_id: { type: string, format: ulid }
+        commit_sha:
+          type: string
+          pattern: "^[a-f0-9]{40}$"
+
+    Run:
+      type: object
+      required: [id, repo_id, commit_sha, status, correlation_id, created_at]
+      properties:
+        id: { type: string, format: ulid }
+        repo_id: { type: string, format: ulid }
+        commit_sha: { type: string }
+        tests_repo_commit_sha: { type: string, nullable: true }
+        runner_image_digest: { type: string, nullable: true }
+        status:
+          type: string
+          enum: [queued, running, passed, failed, error, cancelled, timed_out]
+        cancellation_reason: { type: string, nullable: true }
+        jenkins_build_url: { type: string, nullable: true, format: uri }
+        correlation_id: { type: string, format: uuid }
+        heartbeat_at: { type: string, format: date-time, nullable: true }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+        timeout_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    RunList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Run" }
+        next_cursor: { type: string, nullable: true }
+
+    TestCaseResult:
+      type: object
+      required: [id, test_run_id, name, status, duration_ms]
+      properties:
+        id: { type: string, format: ulid }
+        test_run_id: { type: string, format: ulid }
+        name: { type: string }
+        status: { type: string, enum: [passed, failed, skipped] }
+        duration_ms: { type: integer }
+        preview: { type: string, description: "Truncated stdout/stderr preview" }
+        artifact_ref: { type: string, nullable: true, description: "Full log artifact ID, if present" }
+
+    BuildArtifact:
+      type: object
+      required: [id, test_run_id, kind, size_bytes, retention_until]
+      properties:
+        id: { type: string, format: ulid }
+        test_run_id: { type: string, format: ulid }
+        kind: { type: string, enum: [logs, tarball, junit] }
+        size_bytes: { type: integer }
+        retention_until: { type: string, format: date-time }
+
+    TestContribution:
+      type: object
+      required: [id, user_id, project_id, github_pr_url, status, created_at]
+      properties:
+        id: { type: string, format: ulid }
+        user_id: { type: string, format: ulid }
+        project_id: { type: string, format: ulid }
+        github_pr_url: { type: string, format: uri }
+        status: { type: string, enum: [open, merged, rejected] }
+        merged_commit_sha: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    BuildStartedEvent:
+      type: object
+      required: [test_run_id, jenkins_build_url, started_at, runner_image_digest, tests_repo_commit_sha]
+      properties:
+        test_run_id: { type: string, format: ulid }
+        jenkins_build_url: { type: string, format: uri }
+        started_at: { type: string, format: date-time }
+        runner_image_digest: { type: string }
+        tests_repo_commit_sha: { type: string }
+
+    HeartbeatEvent:
+      type: object
+      required: [test_run_id, heartbeat_at]
+      properties:
+        test_run_id: { type: string, format: ulid }
+        heartbeat_at: { type: string, format: date-time }
+        stage: { type: string }
+
+    BuildCompletedEvent:
+      type: object
+      required: [test_run_id, finished_at, cases]
+      properties:
+        test_run_id: { type: string, format: ulid }
+        finished_at: { type: string, format: date-time }
+        cases:
+          type: array
+          items:
+            type: object
+            required: [name, status, duration_ms]
+            properties:
+              name: { type: string }
+              status: { type: string, enum: [passed, failed, skipped] }
+              duration_ms: { type: integer }
+              preview: { type: string }
+              artifact_ref: { type: string }
+        artifacts:
+          type: array
+          items:
+            type: object
+            required: [kind, s3_key, size_bytes]
+            properties:
+              kind: { type: string, enum: [logs, tarball, junit] }
+              s3_key: { type: string }
+              size_bytes: { type: integer }
+
+    BuildErroredEvent:
+      type: object
+      required: [test_run_id, finished_at, error]
+      properties:
+        test_run_id: { type: string, format: ulid }
+        finished_at: { type: string, format: date-time }
+        error: { type: string }
+        detail: { type: string }

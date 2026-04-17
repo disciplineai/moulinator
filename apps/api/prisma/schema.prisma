@@ -1,0 +1,230 @@
+// Moulinator database schema.
+// Contract-freeze artifact: changes require main-agent update + notification.
+// Reproducibility invariant: TestRun pins tests_repo_commit_sha + runner_image_digest.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  student
+  moderator
+  admin
+}
+
+enum RunStatus {
+  queued
+  running
+  passed
+  failed
+  error
+  cancelled
+  timed_out
+}
+
+enum TestCaseStatus {
+  passed
+  failed
+  skipped
+}
+
+enum ArtifactKind {
+  logs
+  tarball
+  junit
+}
+
+enum ContributionStatus {
+  open
+  merged
+  rejected
+}
+
+enum Language {
+  c
+  cpp
+  python
+  bash
+  haskell
+}
+
+model User {
+  id            String   @id @db.Char(26) // ULID
+  email         String   @unique
+  password_hash String
+  role          Role     @default(student)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  credentials   GithubCredential[]
+  repos         Repository[]
+  contributions TestContribution[]
+  audit_logs    AuditLog[]
+
+  @@map("users")
+}
+
+model GithubCredential {
+  id           String    @id @db.Char(26)
+  user_id      String    @db.Char(26)
+  label        String
+  ciphertext   Bytes // AES-256-GCM ciphertext
+  iv           Bytes
+  auth_tag     Bytes
+  wrapped_dek  Bytes // DEK wrapped by MASTER_KEY
+  scopes       String[] // scopes reported by GitHub
+  last_used_at DateTime?
+  created_at   DateTime  @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@map("github_credentials")
+}
+
+model ProjectDefinition {
+  id                   String    @id @db.Char(26)
+  slug                 String    @unique
+  name                 String
+  language             Language
+  tests_path           String
+  runner_image_digest  String // "sha256:…"
+  hermetic             Boolean   @default(true)
+  egress_allowlist     Json // [{host, ports:[...]}, ...] — consulted when hermetic=false
+  timeout_seconds      Int       @default(600)
+  resource_limits      Json // { memory_mb, cpus, pids, disk_mb }
+  harness_entrypoint   String
+  created_at           DateTime  @default(now())
+  updated_at           DateTime  @updatedAt
+
+  repos Repository[]
+  contributions TestContribution[]
+
+  @@map("project_definitions")
+}
+
+model Repository {
+  id             String   @id @db.Char(26)
+  user_id        String   @db.Char(26)
+  project_id     String   @db.Char(26)
+  github_url     String
+  default_branch String   @default("main")
+  created_at     DateTime @default(now())
+
+  user    User              @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  project ProjectDefinition @relation(fields: [project_id], references: [id])
+  runs    TestRun[]
+
+  @@unique([user_id, github_url, project_id])
+  @@index([user_id])
+  @@map("repositories")
+}
+
+model TestRun {
+  id                    String    @id @db.Char(26)
+  repo_id               String    @db.Char(26)
+  commit_sha            String
+  tests_repo_commit_sha String?
+  runner_image_digest   String?
+  status                RunStatus @default(queued)
+  cancellation_reason   String?
+  jenkins_build_url     String?
+  correlation_id        String    @unique @db.Uuid
+  heartbeat_at          DateTime?
+  started_at            DateTime?
+  finished_at           DateTime?
+  timeout_at            DateTime
+  created_at            DateTime  @default(now())
+
+  repo      Repository       @relation(fields: [repo_id], references: [id], onDelete: Cascade)
+  cases     TestCaseResult[]
+  artifacts BuildArtifact[]
+
+  @@index([repo_id, created_at])
+  @@index([status, heartbeat_at]) // reaper scan
+  @@index([status, timeout_at])
+  @@map("test_runs")
+}
+
+model TestCaseResult {
+  id           String         @id @db.Char(26)
+  test_run_id  String         @db.Char(26)
+  name         String
+  status       TestCaseStatus
+  duration_ms  Int
+  preview      String? // truncated stdout/stderr
+  artifact_ref String? // pointer to BuildArtifact.id for full log
+  created_at   DateTime       @default(now())
+
+  run TestRun @relation(fields: [test_run_id], references: [id], onDelete: Cascade)
+
+  @@index([test_run_id])
+  @@map("test_case_results")
+}
+
+model BuildArtifact {
+  id              String       @id @db.Char(26)
+  test_run_id     String       @db.Char(26)
+  kind            ArtifactKind
+  s3_key          String       @unique
+  size_bytes      BigInt
+  retention_until DateTime
+  created_at      DateTime     @default(now())
+
+  run TestRun @relation(fields: [test_run_id], references: [id], onDelete: Cascade)
+
+  @@index([test_run_id])
+  @@index([retention_until])
+  @@map("build_artifacts")
+}
+
+model TestContribution {
+  id                String             @id @db.Char(26)
+  user_id           String             @db.Char(26)
+  project_id        String             @db.Char(26)
+  github_pr_url     String             @unique
+  status            ContributionStatus @default(open)
+  merged_commit_sha String?
+  created_at        DateTime           @default(now())
+  updated_at        DateTime           @updatedAt
+
+  user    User              @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  project ProjectDefinition @relation(fields: [project_id], references: [id])
+
+  @@index([status])
+  @@index([project_id, status])
+  @@map("test_contributions")
+}
+
+model WebhookEvent {
+  idempotency_key String    @id @db.Uuid
+  payload_hash    Bytes // sha256 of raw body
+  event           String // build_started | heartbeat | build_completed | build_errored
+  received_at     DateTime  @default(now())
+  processed_at    DateTime?
+
+  @@index([received_at]) // vacuum scan
+  @@map("webhook_events")
+}
+
+model AuditLog {
+  id         BigInt   @id @default(autoincrement())
+  actor_id   String?  @db.Char(26) // null for system actions
+  action     String // auth.login, credentials.create, runs.trigger, …
+  entity     String?
+  entity_id  String?
+  ip         String?
+  metadata   Json?
+  created_at DateTime @default(now())
+
+  actor User? @relation(fields: [actor_id], references: [id])
+
+  @@index([actor_id, created_at])
+  @@index([action, created_at])
+  @@map("audit_logs")
+}
