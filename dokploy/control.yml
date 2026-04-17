@@ -1,0 +1,98 @@
+# =========================================================================
+# Dokploy stack — moulinator-control
+# =========================================================================
+# Wraps docker-compose.control.yml for deployment on Dokploy host A.
+# Dokploy reads this file to know which compose to deploy, which env vars
+# to expose to the UI (so a human can set them per-environment), and which
+# are mandatory.
+#
+# Usage in Dokploy:
+#   Project: moulinator
+#   Stack:   control
+#   Compose path: docker-compose.control.yml
+#   Env: managed via this declaration (values entered in the UI, not committed).
+# =========================================================================
+
+name: moulinator-control
+compose_file: docker-compose.control.yml
+
+# Host selector. Dokploy schedules the stack on the agent with this label.
+# Must be the control-plane VM — no runner jobs execute here.
+target_host_label: plane=control
+
+# Env vars exposed in the Dokploy UI. `required: true` blocks deploy if empty;
+# `secret: true` hides the value in logs/UI and stores it in the vault.
+# Keep this list in lockstep with .env.template.
+env:
+  # Postgres
+  - { name: POSTGRES_USER,            required: true,  default: moulinator }
+  - { name: POSTGRES_PASSWORD,        required: true,  secret: true }
+  - { name: POSTGRES_DB,              required: true,  default: moulinator }
+  - { name: DATABASE_URL,             required: true,  secret: true }
+
+  # Redis
+  - { name: REDIS_URL,                required: true,  default: "redis://redis:6379/0" }
+
+  # Crypto
+  - { name: MASTER_KEY_HEX,           required: true,  secret: true, description: "32-byte hex (64 chars). openssl rand -hex 32" }
+  - { name: JWT_ACCESS_SECRET,        required: true,  secret: true }
+  - { name: JWT_REFRESH_SECRET,       required: true,  secret: true }
+
+  # Jenkins
+  - { name: JENKINS_WEBHOOK_SECRET,   required: true,  secret: true }
+  - { name: JENKINS_URL,              required: true,  default: "http://jenkins-controller:8080" }
+  - { name: JENKINS_USER,             required: true }
+  - { name: JENKINS_API_TOKEN,        required: true,  secret: true }
+  - { name: JENKINS_JOB_NAME,         required: true,  default: moulinator-run }
+  - { name: JENKINS_ADMIN_USER,       required: true,  default: admin }
+  - { name: JENKINS_ADMIN_PASSWORD,   required: true,  secret: true, description: "JCasC-provisioned admin password" }
+
+  # MinIO
+  - { name: MINIO_ROOT_USER,          required: true,  default: moulinator }
+  - { name: MINIO_ROOT_PASSWORD,      required: true,  secret: true }
+  - { name: MINIO_ACCESS_KEY,         required: true }
+  - { name: MINIO_SECRET_KEY,         required: true,  secret: true }
+  - { name: MINIO_ENDPOINT,           required: true,  default: "http://minio:9000" }
+  - { name: MINIO_PUBLIC_ENDPOINT,    required: true,  description: "Runner-plane reachable URL, e.g. https://s3.moulinator.dev" }
+  - { name: MINIO_REGION,             required: true,  default: us-east-1 }
+  - { name: MINIO_BUCKET_WORKSPACES,  required: true,  default: workspaces }
+  - { name: MINIO_BUCKET_LOGS,        required: true,  default: logs }
+  - { name: MINIO_BUCKET_JUNIT,       required: true,  default: junit }
+
+  # Public URLs
+  - { name: PUBLIC_API_URL,           required: true }
+  - { name: PUBLIC_WEB_URL,           required: true }
+
+  # Tests-repo
+  - { name: TESTS_REPO_URL,           required: true }
+
+  # Reaper
+  - { name: HEARTBEAT_TIMEOUT_SECONDS, required: false, default: "120" }
+  - { name: HEARTBEAT_INTERVAL_SECONDS, required: false, default: "30" }
+
+  # Runtime
+  - { name: NODE_ENV,                 required: true,  default: production }
+  - { name: LOG_LEVEL,                required: false, default: info }
+
+  # Jenkins controller public hostname (used for agent fallback routing).
+  - { name: JENKINS_PUBLIC_HOST,      required: false, default: jenkins.moulinator.dev }
+
+# Persistent volumes managed by Dokploy — survive redeploys.
+volumes:
+  - postgres_data
+  - redis_data
+  - minio_data
+  - jenkins_home
+
+# Ports that Dokploy should publish publicly (behind its reverse proxy + TLS).
+published_ports:
+  - { service: web,                container_port: 3000, route: "{{PUBLIC_WEB_URL}}" }
+  - { service: api,                container_port: 3000, route: "{{PUBLIC_API_URL}}" }
+  # Jenkins HTTPS — Dokploy terminates TLS here. The Jenkins agent connects
+  # inbound via WebSocket over this listener, so remoting traffic is TLS-wrapped
+  # end-to-end without exposing the plaintext JNLP port. Note: this is
+  # server-authenticated TLS + shared-secret agent auth — not client-certificate
+  # mTLS. See docs/phase-1-devops.md §4b for the trade-off.
+  - { service: jenkins-controller, container_port: 8080, route: "jenkins.moulinator.dev" }
+  # MinIO S3 API published for runner-plane fetches + pre-signed URLs.
+  - { service: minio,              container_port: 9000, route: "s3.moulinator.dev" }

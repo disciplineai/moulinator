@@ -1,0 +1,20 @@
+# Plugins installed into the Jenkins controller via jenkins-plugin-cli at
+# image build time. Keep the list minimal — each plugin is a supply-chain
+# surface area.
+
+# Core: security
+configuration-as-code:latest
+matrix-auth:latest
+
+# Core: pipelines
+workflow-aggregator:latest
+pipeline-stage-view:latest
+pipeline-utility-steps:latest
+
+# Credentials + HTTP
+credentials-binding:latest
+plain-credentials:latest
+
+# Git / SSH
+git:latest
+ssh-agent:latest

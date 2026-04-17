@@ -1,0 +1,60 @@
+# =========================================================================
+# Dokploy stack — moulinator-runners
+# =========================================================================
+# Wraps docker-compose.runners.yml for deployment on Dokploy host B.
+# Deploys the Jenkins agent + firewall sidecar. NO student code runs in the
+# agent itself — the agent spawns hermetic per-build containers on this VM's
+# Docker engine.
+#
+# Host B must:
+#   - be a SEPARATE VM from host A (different security boundary)
+#   - have Docker engine installed
+#   - have outbound firewall rules matching docs/ARCHITECTURE.md §2.1
+# =========================================================================
+
+name: moulinator-runners
+compose_file: docker-compose.runners.yml
+
+target_host_label: plane=runners
+
+env:
+  # Jenkins agent registration (created once on the controller, copied here).
+  # The agent connects via WebSocket over JENKINS_CONTROLLER_URL; no separate
+  # JNLP port is needed on this plane.
+  - { name: JENKINS_CONTROLLER_URL,     required: true,  description: "https://jenkins.moulinator.dev" }
+  - { name: JENKINS_AGENT_NAME,         required: true,  description: "Matches node name on controller" }
+  - { name: JENKINS_AGENT_SECRET,       required: true,  secret: true }
+  - { name: JENKINS_AGENT_WORKDIR,      required: true,  default: /home/jenkins/agent }
+
+  # MinIO — used by the pipeline to download workspaces + upload logs.
+  - { name: MINIO_PUBLIC_ENDPOINT,      required: true,  description: "Same URL as control plane exposes publicly" }
+
+  # Tests-repo
+  - { name: TESTS_REPO_URL,             required: true }
+  - { name: TESTS_REPO_DEPLOY_KEY_PATH, required: true,  default: /run/secrets/tests_repo_deploy_key }
+  - { name: TESTS_REPO_KNOWN_HOSTS_PATH, required: true, default: /run/secrets/tests_repo_known_hosts, description: "Pinned SSH host keys (ssh-keyscan output)" }
+
+  # Runner image registry + per-build network prefix.
+  - { name: RUNNER_REGISTRY,            required: true,  description: "e.g. ghcr.io/your-org/moulinator" }
+  - { name: RUNNER_NETWORK_PREFIX,      required: true,  default: moulinator-run }
+
+  # Always-allow firewall entries (space-separated host:port).
+  - { name: FIREWALL_ALWAYS_ALLOW_HOSTS, required: false, description: "e.g. s3.moulinator.dev:443 jenkins.moulinator.dev:443" }
+
+  # Heartbeat interval — used by the pipeline's background loop.
+  - { name: HEARTBEAT_INTERVAL_SECONDS, required: false, default: "30" }
+
+  # Docker GID from the host — needed so the agent can talk to /var/run/docker.sock.
+  - { name: DOCKER_GID,                 required: true,  description: "Run `getent group docker` on host B" }
+
+# File secrets mounted into containers. Dokploy supplies them from its secret store.
+# The deploy key is a read-only SSH private key for the tests-repo.
+secrets:
+  - { name: tests_repo_deploy_key,   target: "${TESTS_REPO_DEPLOY_KEY_PATH}",   mode: "0400" }
+  - { name: tests_repo_known_hosts,  target: "${TESTS_REPO_KNOWN_HOSTS_PATH}",  mode: "0444" }
+
+volumes:
+  - jenkins_agent_home
+
+# Runner plane never publishes ports — all traffic is outbound to control plane.
+published_ports: []

@@ -1,0 +1,29 @@
+# =========================================================================
+# moulinator — CONTROL PLANE local-dev override
+# =========================================================================
+# Use with `docker compose -f docker-compose.control.yml -f docker-compose.control.dev.yml up`.
+# Publishes raw HTTP ports on the host so a developer can hit the services
+# directly from a browser without going through a reverse proxy.
+#
+# Production deployments (Dokploy) must NEVER use this file — the production
+# compose exposes services only internally and relies on Dokploy's proxy +
+# TLS for ingress.
+# =========================================================================
+
+services:
+  minio:
+    ports:
+      - "9000:9000"                   # S3 API
+      - "127.0.0.1:9001:9001"          # console, loopback-only
+
+  api:
+    ports:
+      - "3001:3000"
+
+  web:
+    ports:
+      - "3000:3000"
+
+  jenkins-controller:
+    ports:
+      - "8080:8080"

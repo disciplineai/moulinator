@@ -1,0 +1,127 @@
+# =========================================================================
+# moulinator — RUNNER PLANE compose
+# =========================================================================
+# Deployed to host B (Dokploy stack "moulinator-runners"). Separate VM, separate
+# security boundary. Only allowed outbound paths (per docs/ARCHITECTURE.md §2.1):
+#   - jenkins-controller:50000/tcp (mTLS WebSocket path — see docs)
+#   - minio public endpoint:9000/tcp (HTTPS in prod)
+#
+# Services:
+#   jenkins-agent     — custom image extending jenkins/inbound-agent with the
+#                       docker/curl/git/socat/openssl/jq CLIs the Jenkinsfile
+#                       calls. Connects to the controller via WebSocket so that
+#                       traffic is wrapped in the controller's TLS listener
+#                       (per upstream guidance: WebSocket inbound = TLS end-to-end).
+#                       Mounts /var/run/docker.sock so it can spawn job
+#                       containers — the socket is scoped to this VM, never to
+#                       job containers.
+#   firewall-sidecar  — custom image with iptables + jq + docker CLI. Accepts
+#                       per-build apply/cleanup requests over a Unix socket
+#                       exposed via a shared volume with the agent, and
+#                       mutates iptables in the host netns.
+#
+# Absolute rules:
+#   - Job containers (spawned by Jenkinsfile) NEVER bind /var/run/docker.sock.
+#   - Job containers NEVER mount host paths beyond a tmpfs workspace.
+#   - Job containers attach to a per-build `moulinator-run-<BUILD_ID>` network
+#     whose egress is default-deny via sidecar-applied iptables.
+# =========================================================================
+
+name: moulinator-runners
+
+networks:
+  runners:
+    driver: bridge
+
+volumes:
+  # Shared volume between agent + sidecar. The agent workdir lives here AND
+  # the sidecar exposes the firewall.sock here. Path inside agent matches
+  # JENKINS_AGENT_WORKDIR; path inside sidecar is /shared.
+  jenkins_agent_home:
+
+services:
+
+  # -----------------------------------------------------------------------
+  # jenkins-agent
+  # -----------------------------------------------------------------------
+  jenkins-agent:
+    build:
+      context: ./docker/agent
+      dockerfile: Dockerfile
+    image: moulinator/jenkins-agent:local
+    restart: unless-stopped
+    environment:
+      JENKINS_URL: ${JENKINS_CONTROLLER_URL}
+      JENKINS_AGENT_NAME: ${JENKINS_AGENT_NAME}
+      JENKINS_SECRET: ${JENKINS_AGENT_SECRET}
+      JENKINS_AGENT_WORKDIR: ${JENKINS_AGENT_WORKDIR}
+      # Force WebSocket transport — controller terminates TLS on the HTTPS
+      # listener and tunnels remoting through it end-to-end. This is the
+      # upstream-recommended path for cross-network agents and removes the
+      # need to expose the plaintext 50000/tcp JNLP port publicly.
+      JENKINS_WEB_SOCKET: "true"
+      JENKINS_TUNNEL: ""
+      # Exposed to the Jenkinsfile.
+      RUNNER_REGISTRY: ${RUNNER_REGISTRY}
+      RUNNER_NETWORK_PREFIX: ${RUNNER_NETWORK_PREFIX}
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT}
+      TESTS_REPO_URL: ${TESTS_REPO_URL}
+      TESTS_REPO_DEPLOY_KEY_PATH: ${TESTS_REPO_DEPLOY_KEY_PATH}
+      TESTS_REPO_KNOWN_HOSTS_PATH: ${TESTS_REPO_KNOWN_HOSTS_PATH}
+      HEARTBEAT_INTERVAL_SECONDS: ${HEARTBEAT_INTERVAL_SECONDS}
+    volumes:
+      # Agent workdir — ALSO where the firewall socket is exposed (see sidecar).
+      - jenkins_agent_home:${JENKINS_AGENT_WORKDIR}
+      # Docker socket for `docker run` of job containers. Agent only.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Deploy key + pinned known_hosts for tests-repo, read-only. Managed by
+      # Dokploy secrets. Both are mandatory — missing known_hosts disables
+      # TOFU and the pipeline refuses to run.
+      - ${TESTS_REPO_DEPLOY_KEY_PATH}:${TESTS_REPO_DEPLOY_KEY_PATH}:ro
+      - ${TESTS_REPO_KNOWN_HOSTS_PATH}:${TESTS_REPO_KNOWN_HOSTS_PATH}:ro
+    group_add:
+      - "${DOCKER_GID:-999}"
+    networks:
+      - runners
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'agent.jar' >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # -----------------------------------------------------------------------
+  # firewall-sidecar
+  # -----------------------------------------------------------------------
+  firewall-sidecar:
+    build:
+      # Build from repo root so Dockerfile can COPY scripts/firewall.sh.
+      context: .
+      dockerfile: docker/firewall/Dockerfile
+    image: moulinator/firewall-sidecar:local
+    restart: unless-stopped
+    # Host networking is required to manipulate the host netns iptables.
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      # Socket path INSIDE the sidecar container.
+      SOCK: /shared/firewall.sock
+      # Always-allow targets (space-separated host:port). Typically the MinIO
+      # public endpoint + Jenkins controller — the agent needs them regardless
+      # of project allowlist.
+      ALWAYS_ALLOW_HOSTS: ${FIREWALL_ALWAYS_ALLOW_HOSTS:-}
+    volumes:
+      # SAME volume as the agent but mounted at /shared. The agent sees the
+      # socket at ${JENKINS_AGENT_WORKDIR}/firewall.sock, matching the path
+      # the Jenkinsfile computes.
+      - jenkins_agent_home:/shared
+      # Read-only docker socket so `docker network inspect` works.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /shared/firewall.sock"]
+      interval: 20s
+      timeout: 3s
+      retries: 3
+      start_period: 20s

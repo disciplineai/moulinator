@@ -1,0 +1,51 @@
+# Jenkins Configuration as Code (JCasC) — minimal security bootstrap.
+#
+# Applied on controller boot via the configuration-as-code plugin. Establishes:
+#   - A local admin user whose password is read from JENKINS_ADMIN_PASSWORD.
+#   - Full-control for that admin; anonymous read-only disabled.
+#   - CSRF protection on. The Jenkinsfile uses API tokens so this is fine.
+#   - JNLP/WebSocket agents enabled; agent port fixed to 50000 internally.
+#   - The webhook-HMAC secret registered as a "Secret text" credential the
+#     pipeline looks up via `withCredentials(credentialsId: 'jenkins-webhook-secret')`.
+#
+# This file is mounted read-only into /var/jenkins_home/jenkins.yaml and the
+# configuration-as-code plugin is set up via the installed-plugins.txt list.
+
+jenkins:
+  systemMessage: "Moulinator controller — managed via JCasC"
+  numExecutors: 0                  # controller runs no jobs itself
+  mode: EXCLUSIVE
+  remotingSecurity:
+    enabled: true
+  slaveAgentPort: 50000
+  agentProtocols:
+    - "JNLP4-connect"
+
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "${JENKINS_ADMIN_USER:-admin}"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+  crumbIssuer:
+    standard:
+      excludeClientIPFromCrumb: true
+
+unclassified:
+  location:
+    url: "${JENKINS_URL:-http://jenkins-controller:8080}"
+
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - string:
+              scope: GLOBAL
+              id: "jenkins-webhook-secret"
+              description: "HMAC secret used by the moulinator pipeline to sign webhooks"
+              secret: "${JENKINS_WEBHOOK_SECRET}"

@@ -1,0 +1,270 @@
+# =========================================================================
+# moulinator — CONTROL PLANE compose
+# =========================================================================
+# Deployed to host A (Dokploy stack "moulinator-control").
+# Untrusted student code NEVER runs on this plane.
+#
+# Services:
+#   postgres           — primary datastore (Prisma).
+#   redis              — BullMQ queue + rate limit + caches.
+#   minio              — S3-compatible object storage for workspaces/logs/junit.
+#   createbuckets      — one-shot init to create buckets + apply lifecycle.
+#   api                — NestJS API (apps/api).
+#   web                — Next.js frontend (apps/web).
+#   jenkins-controller — Jenkins master; agents connect inbound via mTLS on 50000.
+#
+# The `runner` plane lives in docker-compose.runners.yml on a different host.
+# Only `jenkins-controller` is exposed to the runner plane (on 50000/tcp via mTLS).
+# =========================================================================
+
+name: moulinator-control
+
+networks:
+  control:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  jenkins_home:
+
+services:
+
+  # -----------------------------------------------------------------------
+  # postgres
+  # -----------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - control
+    # Not published on host; only api reaches it inside `control`.
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # -----------------------------------------------------------------------
+  # redis
+  # -----------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - control
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # -----------------------------------------------------------------------
+  # minio — S3-compatible object storage
+  # Exposed on 9000 (S3 API) + 9001 (console). In production, fronted by TLS.
+  # -----------------------------------------------------------------------
+  minio:
+    image: minio/minio:RELEASE.2025-01-20T14-49-07Z
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_REGION: ${MINIO_REGION}
+    volumes:
+      - minio_data:/data
+    networks:
+      - control
+    # No host `ports` — Dokploy routes `s3.moulinator.dev` → 9000 through its
+    # reverse proxy with TLS. For local dev, use docker-compose.control.dev.yml
+    # which overrides this service to publish 9000/9001 on the host.
+    expose:
+      - "9000"
+      - "9001"
+    healthcheck:
+      # /minio/health/live is the documented cluster-agnostic liveness probe.
+      # `curl` is verified present in the pinned `minio/minio:RELEASE.2025-01-20T14-49-07Z`
+      # image. If you bump the image digest, confirm `command -v curl` still
+      # returns a path.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # -----------------------------------------------------------------------
+  # createbuckets — one-shot init job.
+  #   - creates the three buckets with lifecycle rules
+  #     (workspaces 1d, logs 30d, junit 30d)
+  #   - provisions a scoped service user (MINIO_ACCESS_KEY/SECRET_KEY) with a
+  #     policy limited to read/write + multipart + presigned-url-usable ops on
+  #     ONLY those three buckets. The api service uses these credentials; the
+  #     root creds stay isolated to admin-plane operations.
+  # Safe to re-run; `mc` ignores already-existing resources.
+  # -----------------------------------------------------------------------
+  createbuckets:
+    image: minio/mc:RELEASE.2025-01-17T23-25-50Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - control
+    # Bootstrap logic lives in scripts/minio-bootstrap.sh — keeping it in a
+    # real shell script avoids YAML heredoc escaping pitfalls and makes the
+    # IAM policy reviewable in isolation.
+    volumes:
+      - ./scripts/minio-bootstrap.sh:/usr/local/bin/minio-bootstrap.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/minio-bootstrap.sh"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET_WORKSPACES: ${MINIO_BUCKET_WORKSPACES}
+      MINIO_BUCKET_LOGS: ${MINIO_BUCKET_LOGS}
+      MINIO_BUCKET_JUNIT: ${MINIO_BUCKET_JUNIT}
+    restart: "no"
+
+  # -----------------------------------------------------------------------
+  # api — NestJS
+  # -----------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: moulinator/api:local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      # Must wait for the scoped user + buckets + lifecycle rules to exist.
+      # service_completed_successfully blocks api start until createbuckets
+      # returns 0, which is exactly what we need.
+      createbuckets:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      LOG_LEVEL: ${LOG_LEVEL}
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      MASTER_KEY_HEX: ${MASTER_KEY_HEX}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JENKINS_WEBHOOK_SECRET: ${JENKINS_WEBHOOK_SECRET}
+      JENKINS_URL: ${JENKINS_URL}
+      JENKINS_USER: ${JENKINS_USER}
+      JENKINS_API_TOKEN: ${JENKINS_API_TOKEN}
+      JENKINS_JOB_NAME: ${JENKINS_JOB_NAME}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET_WORKSPACES: ${MINIO_BUCKET_WORKSPACES}
+      MINIO_BUCKET_LOGS: ${MINIO_BUCKET_LOGS}
+      MINIO_BUCKET_JUNIT: ${MINIO_BUCKET_JUNIT}
+      MINIO_REGION: ${MINIO_REGION}
+      PUBLIC_API_URL: ${PUBLIC_API_URL}
+      PUBLIC_WEB_URL: ${PUBLIC_WEB_URL}
+      TESTS_REPO_URL: ${TESTS_REPO_URL}
+      HEARTBEAT_TIMEOUT_SECONDS: ${HEARTBEAT_TIMEOUT_SECONDS}
+      HEARTBEAT_INTERVAL_SECONDS: ${HEARTBEAT_INTERVAL_SECONDS}
+    networks:
+      - control
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  # -----------------------------------------------------------------------
+  # web — Next.js
+  # -----------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL}
+    image: moulinator/web:local
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      PUBLIC_API_URL: ${PUBLIC_API_URL}
+      PUBLIC_WEB_URL: ${PUBLIC_WEB_URL}
+    networks:
+      - control
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  # -----------------------------------------------------------------------
+  # jenkins-controller
+  # Agents on the runner plane connect inbound via WebSocket over the HTTPS
+  # listener (TLS terminated by the Dokploy reverse proxy in prod). The raw
+  # JNLP port 50000 is still published for local/dev; prod closes it at the
+  # host firewall and relies on WebSocket tunneling.
+  # -----------------------------------------------------------------------
+  jenkins-controller:
+    build:
+      context: ./docker/jenkins
+      dockerfile: Dockerfile
+    image: moulinator/jenkins-controller:local
+    restart: unless-stopped
+    environment:
+      JENKINS_OPTS: "--httpPort=8080"
+      JENKINS_SLAVE_AGENT_PORT: "50000"
+      # JCasC reads these. Admin user is required; password MUST be set in prod.
+      JENKINS_ADMIN_USER: ${JENKINS_ADMIN_USER:-admin}
+      JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD}
+      JENKINS_URL: ${JENKINS_URL}
+      JENKINS_WEBHOOK_SECRET: ${JENKINS_WEBHOOK_SECRET}
+      # -Dhudson.TcpSlaveAgentListener.hostName forces the agent to dial the
+      # publicly-reachable hostname when falling back from WebSocket.
+      JAVA_OPTS: "-Djenkins.install.runSetupWizard=false -Dhudson.TcpSlaveAgentListener.hostName=${JENKINS_PUBLIC_HOST:-jenkins.moulinator.dev}"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+    networks:
+      - control
+    # No host `ports` in production — Dokploy routes `jenkins.moulinator.dev`
+    # → 8080 through its reverse proxy with TLS. Local dev uses the
+    # docker-compose.control.dev.yml override to publish 8080 on the host.
+    # The JNLP port 50000 stays internal-only (§4b in docs/phase-1-devops.md).
+    expose:
+      - "8080"
+      - "50000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/login"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
