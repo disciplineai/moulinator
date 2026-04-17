@@ -331,6 +331,9 @@ pipeline {
               # exec the resulting binaries; noexec would break that path.
               # nosuid + nodev are safe invariants regardless of language
               # (no setuid binaries, no device files in a scratch workspace).
+              # Run container in background so the outer shell (which has
+              # timeout(1)) can enforce the wall-clock limit. The runner image
+              # is not guaranteed to ship timeout(1) itself.
               docker run --rm \
                 --name "$M_CONTAINER" \
                 --network "$M_NETWORK" \
@@ -352,10 +355,18 @@ pipeline {
                 -e MOULINATOR_RESULT_JSON=/work/out/result.json \
                 -e MOULINATOR_JUNIT_XML=/work/out/junit.xml \
                 -e MOULINATOR_FULL_LOG=/work/out/full.log \
+                --entrypoint sh \
                 "$M_IMAGE_REF" \
-                sh -c 'timeout -s TERM "$MOULINATOR_TIMEOUT" bash "/work/tests/$MOULINATOR_SLUG/$MOULINATOR_HARNESS"' \
-                > "$M_FULL_LOG" 2>&1
+                -c 'bash "/work/tests/$MOULINATOR_SLUG/$MOULINATOR_HARNESS"' \
+                > "$M_FULL_LOG" 2>&1 &
+              _DK_PID=$!
+              # Killer: force-remove the container after timeout so docker run exits.
+              ( sleep "$M_TIMEOUT" && docker rm -f "$M_CONTAINER" >/dev/null 2>&1 ) &
+              _KILL_PID=$!
+              wait "$_DK_PID" || true
               _DKRC=$?
+              kill "$_KILL_PID" 2>/dev/null || true
+              wait "$_KILL_PID" 2>/dev/null || true
               cat "$M_FULL_LOG" >&2
               exit $_DKRC
             ''')
