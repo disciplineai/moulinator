@@ -138,13 +138,10 @@ pipeline {
         script {
           // Stage the request body to a file — JsonOutput is safe from injection
           // and the body is delivered to the sidecar byte-for-byte via socat.
-          def payload = [
-            action:    'apply',
-            network:   env.BUILD_NETWORK,
-            hermetic:  params.hermetic,
-            allowlist: new groovy.json.JsonSlurperClassic().parseText(params.egress_allowlist_json ?: '[]')
-          ]
-          writeFile file: 'firewall-req.json', text: groovy.json.JsonOutput.toJson(payload) + '\n'
+          // buildFirewallPayloadJson is @NonCPS: parses JSON without creating a
+          // LazyMap in CPS scope, returns a plain serializable String.
+          def firewallJson = buildFirewallPayloadJson(env.BUILD_NETWORK, params.hermetic as boolean, params.egress_allowlist_json ?: '[]')
+          writeFile file: 'firewall-req.json', text: firewallJson + '\n'
           withEnv(["M_SOCK=${env.FIREWALL_SOCK}"]) {
             sh '''
               set -eu
@@ -435,8 +432,8 @@ pipeline {
         script {
           stopHeartbeat()
           def resultText = sh(returnStdout: true, script: 'cat "$RESULT_JSON"').trim()
-          def result = new groovy.json.JsonSlurperClassic().parseText(resultText)
-          def cases = (result.cases instanceof List) ? result.cases : []
+          // parseResultCases is @NonCPS: returns ArrayList<LinkedHashMap>, fully serializable.
+          def cases = parseResultCases(resultText)
           def artifacts = [
             [ kind: 'logs',  s3_key: "logs/${params.test_run_id}/full.log", size_bytes: fileSize(env.FULL_LOG) ]
           ]
@@ -593,12 +590,8 @@ def validateRequiredParams() {
     error("cpus=${cpusValue} out of range [0.25, 8]")
   }
   // Allowlist JSON — reject anything non-array.
-  try {
-    def parsed = new groovy.json.JsonSlurperClassic().parseText(params.egress_allowlist_json ?: '[]')
-    if (!(parsed instanceof List)) { error('egress_allowlist_json must be a JSON array') }
-  } catch (ignored) {
-    error('egress_allowlist_json is not valid JSON')
-  }
+  def allowlistError = validateAllowlistJson(params.egress_allowlist_json ?: '[]')
+  if (allowlistError) { error(allowlistError) }
 }
 
 // Emit a signed webhook. Passes every value into the shell via env so that
@@ -712,6 +705,58 @@ def stopHeartbeat() {
 
 def isoNow() {
   return new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone('UTC'))
+}
+
+// =========================================================================
+// @NonCPS JSON helpers
+//
+// JsonSlurper returns groovy.json.internal.LazyMap / LazyList, which are NOT
+// java.io.Serializable. If a LazyMap is held in a CPS scope variable at any
+// pipeline checkpoint (sh, writeFile, withCredentials, …) Jenkins throws
+// NotSerializableException and crashes the build.
+//
+// Wrapping all JSON parsing in @NonCPS methods prevents the CPS engine from
+// ever trying to serialize those objects: @NonCPS frames are not checkpointed.
+// The return values are plain Java types (String, ArrayList, LinkedHashMap)
+// that ARE serializable and safe to hold in CPS scope.
+// =========================================================================
+
+@NonCPS
+static String validateAllowlistJson(String text) {
+  try {
+    def parsed = new groovy.json.JsonSlurper().parseText(text)
+    return (parsed instanceof List) ? null : 'egress_allowlist_json must be a JSON array'
+  } catch (ignored) {
+    return 'egress_allowlist_json is not valid JSON'
+  }
+}
+
+@NonCPS
+static String buildFirewallPayloadJson(String network, boolean hermetic, String allowlistJson) {
+  def allowlist = new groovy.json.JsonSlurper().parseText(allowlistJson)
+  return groovy.json.JsonOutput.toJson([action: 'apply', network: network, hermetic: hermetic, allowlist: allowlist])
+}
+
+@NonCPS
+static List parseResultCases(String resultJson) {
+  def result = new groovy.json.JsonSlurper().parseText(resultJson)
+  def raw = (result.cases instanceof List) ? result.cases : []
+  return deepConvert(raw)
+}
+
+// Recursively convert LazyMap/LazyList to LinkedHashMap/ArrayList so the
+// returned tree is fully serializable by Java object serialization.
+@NonCPS
+static Object deepConvert(Object obj) {
+  if (obj instanceof Map) {
+    def m = new java.util.LinkedHashMap()
+    obj.each { k, v -> m[k.toString()] = deepConvert(v) }
+    return m
+  }
+  if (obj instanceof List) {
+    return new java.util.ArrayList(obj.collect { deepConvert(it) })
+  }
+  return obj
 }
 
 // fileSize must run on the AGENT (that's where the file is) rather than the
