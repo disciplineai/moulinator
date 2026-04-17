@@ -21,6 +21,7 @@ const params: JenkinsTriggerParams = {
   workspaceUrl: 'http://minio/ws.tar.gz',
   testsRepoUrl: 'git@github.com:org/tests.git',
   testsCommitSha: 'a'.repeat(40),
+  runnerImageRepo: 'ghcr.io/your-org/moulinator/runner-c',
   runnerImageDigest: 'sha256:' + 'c'.repeat(64),
   projectSlug: 'cpool-day06',
   harnessEntrypoint: 'tests/harness.sh',
@@ -120,6 +121,12 @@ describe('JenkinsClient', () => {
     const post = stub.calls.find((c) => c.method === 'POST')!;
     expect(post.body).toContain(`test_run_id=${params.testRunId}`);
     expect(post.body).toContain('hermetic=true');
+    expect(post.body).toContain(
+      'runner_image_repo=ghcr.io%2Fyour-org%2Fmoulinator%2Frunner-c',
+    );
+    expect(post.body).toContain(
+      `runner_image_digest=sha256%3A${'c'.repeat(64)}`,
+    );
     expect(post.headers['authorization']).toMatch(/^Basic /);
     expect(post.headers['jenkins-crumb']).toBe('deadbeef');
   });

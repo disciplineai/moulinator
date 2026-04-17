@@ -68,6 +68,7 @@ export class RunsOrchestrator implements IRunsOrchestrator {
     }
 
     const testsRepoCommitSha = await this.testsRepoResolver.resolveHead();
+    const runnerImageRepo = repo.project.runner_image_repo;
     const runnerImageDigest = repo.project.runner_image_digest;
     const timeoutSeconds = repo.project.timeout_seconds;
     const timeoutAt = new Date(Date.now() + timeoutSeconds * 1000);
@@ -174,6 +175,7 @@ export class RunsOrchestrator implements IRunsOrchestrator {
         workspaceUrl: workspacePresigned.url,
         testsRepoUrl,
         testsCommitSha: testsRepoCommitSha,
+        runnerImageRepo,
         runnerImageDigest,
         projectSlug: repo.project.slug,
         harnessEntrypoint: repo.project.harness_entrypoint,

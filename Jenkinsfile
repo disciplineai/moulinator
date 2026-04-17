@@ -46,7 +46,8 @@ pipeline {
     string(name: 'workspace_url',        defaultValue: '', description: 'Pre-signed MinIO GET URL for the credential-free workspace tarball.')
     string(name: 'tests_repo_url',       defaultValue: '', description: 'Tests-repo SSH clone URL.')
     string(name: 'tests_commit_sha',     defaultValue: '', description: 'Commit SHA in the tests-repo to pin against.')
-    string(name: 'runner_image_digest',  defaultValue: '', description: 'sha256:… digest of the runner image to pull.')
+    string(name: 'runner_image_repo',    defaultValue: '', description: 'Full OCI repo path for the runner image (e.g. ghcr.io/your-org/moulinator/runner-c). Required.')
+    string(name: 'runner_image_digest',  defaultValue: '', description: 'sha256:… digest of the runner image to pull. Pulled as <runner_image_repo>@<digest>.')
     string(name: 'project_slug',         defaultValue: '', description: 'Project slug (used for tests_path + logs path).')
     string(name: 'harness_entrypoint',   defaultValue: 'tests/harness.sh', description: 'Harness path relative to <tests-repo>/<slug>/.')
     string(name: 'timeout_seconds',      defaultValue: '600', description: 'Wall-clock limit applied to the harness.')
@@ -107,7 +108,7 @@ pipeline {
     // ---------------------------------------------------------------------
     stage('pull runner image') {
       steps {
-        withEnv(["M_IMAGE_REF=${env.RUNNER_REGISTRY}@${params.runner_image_digest}"]) {
+        withEnv(["M_IMAGE_REF=${params.runner_image_repo}@${params.runner_image_digest}"]) {
           sh '''
             set -eu
             # M_IMAGE_REF is validated upstream (validateRequiredParams ensures
@@ -274,7 +275,7 @@ pipeline {
           "M_MEM=${params.memory_mb}",
           "M_CPUS=${params.cpus}",
           "M_TIMEOUT=${params.timeout_seconds}",
-          "M_IMAGE_REF=${env.RUNNER_REGISTRY}@${params.runner_image_digest}",
+          "M_IMAGE_REF=${params.runner_image_repo}@${params.runner_image_digest}",
           "M_WORKSPACE_DIR=${env.WORKSPACE_DIR}",
           "M_TESTS_CLONE_DIR=${env.TESTS_CLONE_DIR}",
           "M_OUT_DIR=${env.OUT_DIR}",
@@ -460,12 +461,16 @@ pipeline {
 // or mis-configured API cannot weaponise the pipeline.
 def validateRequiredParams() {
   def required = ['test_run_id', 'workspace_url', 'tests_repo_url',
-                  'tests_commit_sha', 'runner_image_digest', 'webhook_url']
+                  'tests_commit_sha', 'runner_image_repo', 'runner_image_digest', 'webhook_url']
   required.each { name ->
     if (!params[name]) { error("missing required parameter: ${name}") }
   }
   if (!(params.runner_image_digest ==~ /^sha256:[a-f0-9]{64}$/)) {
     error("runner_image_digest must be sha256:<64 hex>")
+  }
+  // OCI repo path — registry/path segments, no tags, no digest.
+  if (!(params.runner_image_repo ==~ /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?(:[0-9]+)?(\/[a-z0-9]([a-z0-9._-]*[a-z0-9])?)+$/)) {
+    error("runner_image_repo must be a valid OCI repo path without a tag or digest")
   }
   // ULID-ish: Crockford base32 uppercase, 26 chars.
   if (!(params.test_run_id ==~ /^[0-9A-HJKMNP-TV-Z]{26}$/)) {

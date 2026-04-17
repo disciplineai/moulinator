@@ -11,11 +11,14 @@
 #   { "action": "cleanup", "network": "moulinator-run-42" }
 #
 # Semantics:
-#   - hermetic=true  → default-deny, no allowlist entries (plus always-allow hosts).
+#   - hermetic=true  → default-deny, zero ACCEPT rules. Container has no egress.
 #   - hermetic=false → default-deny + one ACCEPT per (host,port) in allowlist.
 #   - Always allow return traffic for established connections.
-#   - Always allow reaching MinIO public endpoint + Jenkins controller on 50000
-#     so the runner can fetch workspaces + phone home.
+#   - IMPORTANT: no control-plane "always allow" rules are applied to job-
+#     container chains. MinIO fetches and Jenkins remoting happen on the
+#     agent (which is on the host network), NOT inside the hermetic job
+#     container. Leaking those into every build chain would let student
+#     code reach the control plane regardless of project config.
 #
 # Implementation notes:
 #   - iptables is L3/L4 — we resolve DNS at apply time. TTL drift is acceptable
@@ -29,9 +32,6 @@
 set -eu
 
 SOCK="${SOCK:-/shared/firewall.sock}"
-# Space-separated "host:port" entries that are ALWAYS allowed. Configured via
-# env at sidecar launch; typically the MinIO + Jenkins endpoints.
-ALWAYS_ALLOW_HOSTS="${ALWAYS_ALLOW_HOSTS:-}"
 
 log() { printf '[firewall] %s\n' "$*" >&2; }
 
@@ -87,15 +87,6 @@ apply_rules() {
 
   _chain=$(chain_for "$_network")
   ensure_chain "$_chain" || return 1
-
-  # Always-allow hosts first — these bypass the per-project allowlist.
-  for _hp in $ALWAYS_ALLOW_HOSTS; do
-    _host="${_hp%:*}"
-    _port="${_hp##*:}"
-    for _ip in $(resolve "$_host"); do
-      iptables -w -A "$_chain" -d "$_ip" -p tcp --dport "$_port" -j ACCEPT
-    done
-  done
 
   if [ "$_hermetic" = "true" ]; then
     log "network=$_network hermetic — default deny, no allowlist entries"

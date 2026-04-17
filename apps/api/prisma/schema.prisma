@@ -93,6 +93,7 @@ model ProjectDefinition {
   name                 String
   language             Language
   tests_path           String
+  runner_image_repo    String // "ghcr.io/org/moulinator/runner-c" — no tag/digest
   runner_image_digest  String // "sha256:…"
   hermetic             Boolean   @default(true)
   egress_allowlist     Json // [{host, ports:[...]}, ...] — consulted when hermetic=false

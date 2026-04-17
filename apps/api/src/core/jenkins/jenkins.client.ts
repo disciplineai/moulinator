@@ -6,6 +6,7 @@ export interface JenkinsTriggerParams {
   workspaceUrl: string;
   testsRepoUrl: string;
   testsCommitSha: string;
+  runnerImageRepo: string;
   runnerImageDigest: string;
   projectSlug: string;
   harnessEntrypoint: string;
@@ -53,6 +54,7 @@ export class JenkinsClient implements OnModuleInit {
       workspace_url: p.workspaceUrl,
       tests_repo_url: p.testsRepoUrl,
       tests_commit_sha: p.testsCommitSha,
+      runner_image_repo: p.runnerImageRepo,
       runner_image_digest: p.runnerImageDigest,
       project_slug: p.projectSlug,
       harness_entrypoint: p.harnessEntrypoint,

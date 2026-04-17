@@ -23,13 +23,19 @@ RUN apk add --no-cache libc6-compat openssl \
     && corepack prepare pnpm@9.12.0 --activate
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-# Copy every workspace package.json so pnpm resolves the graph. Using a wildcard
-# keeps this generic across the monorepo — adjust when the layout stabilises.
+# Root tsconfig.base.json is extended by apps/api/tsconfig.json; copying it
+# here lets the build stage resolve the base config.
+COPY tsconfig.base.json ./
+# Copy every workspace package so pnpm resolves the graph.
 COPY apps ./apps
 COPY packages ./packages
 
+# --shamefully-hoist materializes transitive deps at the top-level
+# node_modules so plain `require('express')` works after `pnpm deploy` —
+# Nest's platform-express needs this because express is a transitive dep,
+# not a direct one in apps/api/package.json.
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+    pnpm install --frozen-lockfile --shamefully-hoist
 
 
 # -------- build -------------------------------------------------------------
@@ -47,10 +53,13 @@ RUN pnpm exec prisma generate \
     && pnpm run build
 
 # Produce a self-contained production tree at /workspace/deploy-api.
-# --legacy is required when the repo's pnpm-workspace.yaml uses default
-# hoisting; it makes node_modules real-files, not symlinks into the store.
+# `pnpm deploy` materializes the target package with real files (no symlinks
+# into the workspace store), so the result is safe to copy into a thin
+# runtime image without dragging in the pnpm store.
+#   - --filter selects by package name (not path)
+#   - --prod drops devDependencies
 WORKDIR /workspace
-RUN pnpm --filter ./apps/api --prod --legacy deploy /workspace/deploy-api
+RUN pnpm --filter @moulinator/api --prod deploy /workspace/deploy-api
 
 
 # -------- runtime -----------------------------------------------------------
@@ -58,7 +67,7 @@ FROM node:${NODE_VERSION} AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production \
-    PORT=3000
+    API_PORT=3001
 
 RUN apk add --no-cache tini openssl curl \
     && corepack enable \
@@ -66,18 +75,32 @@ RUN apk add --no-cache tini openssl curl \
     && addgroup -S moulinator \
     && adduser -S -G moulinator -h /app moulinator
 
-# Copy the self-contained deploy tree. It already contains package.json +
-# node_modules with real files + dist (because pnpm deploy copies the whole
-# package directory, including the compiled output).
+# Copy the self-contained deploy tree (production deps + dist + package.json).
 COPY --from=build --chown=moulinator:moulinator /workspace/deploy-api/ ./
-# Prisma schema is needed for `migrate deploy` at container boot.
+# Prisma schema + generated client.
 COPY --from=build --chown=moulinator:moulinator /workspace/apps/api/prisma ./prisma
+# `pnpm --prod deploy` strips devDependencies — and prisma is usually in
+# devDependencies. Install the Prisma CLI as a root-owned global so we can
+# run migrations at container boot. npx without network would fail since
+# the runner doesn't have internet at runtime.
+RUN npm install --no-save --global prisma@5.22.0 \
+ && chown -R moulinator:moulinator /app
 
 USER moulinator
-EXPOSE 3000
+# API_PORT is read by apps/api/src/main.ts (default 3001 when unset).
+EXPOSE 3001
 
-HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=4 \
-  CMD curl -fsS http://127.0.0.1:3000/health || exit 1
+# TCP-level readiness probe — backend-crud has not added a /healthz route yet,
+# and a TCP check is the tightest signal that matches what the Nest app
+# actually does (calls `.listen()` on API_PORT). Swap to an HTTP probe on
+# /healthz once that route lands.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=15s --retries=4 \
+  CMD node -e "require('net').createConnection(Number(process.env.API_PORT||3001),'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"
 
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["sh", "-c", "pnpm exec prisma migrate deploy && node dist/main.js"]
+# Runs pending migrations at boot, then starts the server.
+# Nest's tsc output is nested when tsconfig `include` spans outside src/ (it
+# does in this workspace because paths maps into ../../packages), so the
+# compiled entry lives at dist/apps/api/src/main.js rather than dist/main.js.
+# If backend-crud flattens that later, update the CMD in lockstep.
+CMD ["sh", "-c", "prisma migrate deploy --schema=./prisma/schema.prisma && node dist/apps/api/src/main.js"]

@@ -8,6 +8,7 @@ required:
   - slug
   - name
   - language
+  - runner_image_repo
   - runner_image_digest
   - hermetic
   - timeout_seconds
@@ -30,6 +31,16 @@ properties:
     type: string
     description: Path inside tests-repo. Defaults to "<slug>/tests".
     default: ""
+  runner_image_repo:
+    type: string
+    pattern: "^[a-z0-9][a-z0-9._/-]*[a-z0-9]$"
+    minLength: 3
+    maxLength: 256
+    description: >
+      Full OCI repo path WITHOUT tag/digest
+      (e.g. "ghcr.io/your-org/moulinator/runner-c"). Pipeline pulls as
+      `<runner_image_repo>@<runner_image_digest>`. Required because different
+      projects in the same language may diverge (custom tooling pre-baked).
   runner_image_digest:
     type: string
     pattern: "^sha256:[a-f0-9]{64}$"

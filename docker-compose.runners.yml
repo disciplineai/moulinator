@@ -108,10 +108,6 @@ services:
     environment:
       # Socket path INSIDE the sidecar container.
       SOCK: /shared/firewall.sock
-      # Always-allow targets (space-separated host:port). Typically the MinIO
-      # public endpoint + Jenkins controller — the agent needs them regardless
-      # of project allowlist.
-      ALWAYS_ALLOW_HOSTS: ${FIREWALL_ALWAYS_ALLOW_HOSTS:-}
     volumes:
       # SAME volume as the agent but mounted at /shared. The agent sees the
       # socket at ${JENKINS_AGENT_WORKDIR}/firewall.sock, matching the path

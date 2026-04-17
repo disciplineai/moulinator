@@ -62,9 +62,15 @@ env:
   # Public URLs
   - { name: PUBLIC_API_URL,           required: true }
   - { name: PUBLIC_WEB_URL,           required: true }
+  - { name: API_PORT,                 required: false, default: "3001" }
+  - { name: WEB_ORIGIN,               required: true,  description: "CSV of browser origins allowed via CORS" }
 
-  # Tests-repo
-  - { name: TESTS_REPO_URL,           required: true }
+  # Tests-repo (runner plane reuses TESTS_REPO_URL; control plane resolves
+  # HEAD via HTTPS/REST with an optional read-only PAT).
+  - { name: TESTS_REPO_URL,             required: true }
+  - { name: TESTS_REPO_HTTPS_URL,       required: true,  description: "HTTPS URL for API-side HEAD SHA resolution" }
+  - { name: TESTS_REPO_READ_TOKEN,      required: false, secret: true, description: "Only required if the tests-repo is private" }
+  - { name: TESTS_REPO_DEFAULT_BRANCH,  required: false, default: main }
 
   # Reaper
   - { name: HEARTBEAT_TIMEOUT_SECONDS, required: false, default: "120" }
@@ -87,7 +93,7 @@ volumes:
 # Ports that Dokploy should publish publicly (behind its reverse proxy + TLS).
 published_ports:
   - { service: web,                container_port: 3000, route: "{{PUBLIC_WEB_URL}}" }
-  - { service: api,                container_port: 3000, route: "{{PUBLIC_API_URL}}" }
+  - { service: api,                container_port: 3001, route: "{{PUBLIC_API_URL}}" }
   # Jenkins HTTPS — Dokploy terminates TLS here. The Jenkins agent connects
   # inbound via WebSocket over this listener, so remoting traffic is TLS-wrapped
   # end-to-end without exposing the plaintext JNLP port. Note: this is

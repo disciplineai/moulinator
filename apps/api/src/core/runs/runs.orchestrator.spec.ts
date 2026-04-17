@@ -153,6 +153,7 @@ describe('RunsOrchestrator.triggerRun', () => {
       project: {
         id: 'proj-1',
         slug: 'cpool-day06',
+        runner_image_repo: 'ghcr.io/your-org/moulinator/runner-c',
         runner_image_digest: 'sha256:' + 'a'.repeat(64),
         timeout_seconds: 600,
         hermetic: true,
@@ -204,7 +205,7 @@ describe('RunsOrchestrator.triggerRun', () => {
       id: 'repo-1',
       user_id: 'u',
       github_url: 'https://github.com/u/w',
-      project: { timeout_seconds: 600, hermetic: true, egress_allowlist: [], resource_limits: {}, harness_entrypoint: 't', runner_image_digest: 'sha256:' + 'a'.repeat(64), slug: 's' },
+      project: { timeout_seconds: 600, hermetic: true, egress_allowlist: [], resource_limits: {}, harness_entrypoint: 't', runner_image_repo: 'ghcr.io/org/r', runner_image_digest: 'sha256:' + 'a'.repeat(64), slug: 's' },
     });
     prisma.credentials.push({
       id: 'c',
@@ -245,6 +246,7 @@ describe('RunsOrchestrator.triggerRun', () => {
         egress_allowlist: [],
         resource_limits: {},
         harness_entrypoint: 'h',
+        runner_image_repo: 'ghcr.io/org/r',
         runner_image_digest: 'sha256:' + 'a'.repeat(64),
         slug: 's',
       },

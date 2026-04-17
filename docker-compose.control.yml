@@ -164,6 +164,8 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV}
       LOG_LEVEL: ${LOG_LEVEL}
+      API_PORT: ${API_PORT}
+      WEB_ORIGIN: ${WEB_ORIGIN}
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
       MASTER_KEY_HEX: ${MASTER_KEY_HEX}
@@ -185,14 +187,19 @@ services:
       PUBLIC_API_URL: ${PUBLIC_API_URL}
       PUBLIC_WEB_URL: ${PUBLIC_WEB_URL}
       TESTS_REPO_URL: ${TESTS_REPO_URL}
+      TESTS_REPO_HTTPS_URL: ${TESTS_REPO_HTTPS_URL}
+      TESTS_REPO_READ_TOKEN: ${TESTS_REPO_READ_TOKEN}
+      TESTS_REPO_DEFAULT_BRANCH: ${TESTS_REPO_DEFAULT_BRANCH}
       HEARTBEAT_TIMEOUT_SECONDS: ${HEARTBEAT_TIMEOUT_SECONDS}
       HEARTBEAT_INTERVAL_SECONDS: ${HEARTBEAT_INTERVAL_SECONDS}
     networks:
       - control
     expose:
-      - "3000"
+      - "3001"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/health"]
+      # TCP-level probe (see apps/api/Dockerfile). Swap to HTTP /healthz once
+      # backend-crud publishes that route.
+      test: ["CMD", "node", "-e", "require('net').createConnection(Number(process.env.API_PORT||3001),'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
       interval: 15s
       timeout: 3s
       retries: 5
@@ -207,6 +214,7 @@ services:
       dockerfile: apps/web/Dockerfile
       args:
         NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL}
+        PUBLIC_API_URL: ${PUBLIC_API_URL}
     image: moulinator/web:local
     restart: unless-stopped
     depends_on:
@@ -221,7 +229,8 @@ services:
     expose:
       - "3000"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      # Same TCP-level rationale as api — swap to HTTP when a health route lands.
+      test: ["CMD", "node", "-e", "require('net').createConnection(Number(process.env.PORT||3000),'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
       interval: 15s
       timeout: 3s
       retries: 5

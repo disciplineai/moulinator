@@ -2,6 +2,7 @@ slug: cpool-day06
 name: "C Pool — Day 06"
 language: c
 tests_path: cpool-day06/tests
+runner_image_repo: ghcr.io/your-org/moulinator/runner-c
 runner_image_digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
 hermetic: true
 egress_allowlist: []

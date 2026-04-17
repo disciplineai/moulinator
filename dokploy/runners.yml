@@ -38,9 +38,6 @@ env:
   - { name: RUNNER_REGISTRY,            required: true,  description: "e.g. ghcr.io/your-org/moulinator" }
   - { name: RUNNER_NETWORK_PREFIX,      required: true,  default: moulinator-run }
 
-  # Always-allow firewall entries (space-separated host:port).
-  - { name: FIREWALL_ALWAYS_ALLOW_HOSTS, required: false, description: "e.g. s3.moulinator.dev:443 jenkins.moulinator.dev:443" }
-
   # Heartbeat interval — used by the pipeline's background loop.
   - { name: HEARTBEAT_INTERVAL_SECONDS, required: false, default: "30" }
 
