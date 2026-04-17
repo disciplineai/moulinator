@@ -136,15 +136,16 @@ pipeline {
           '''
         }
         script {
-          // Stage the request body to a file — writeJSON is safe from injection
+          // Stage the request body to a file — JsonOutput is safe from injection
           // and the body is delivered to the sidecar byte-for-byte via socat.
           def payload = [
             action:    'apply',
             network:   env.BUILD_NETWORK,
             hermetic:  params.hermetic,
-            allowlist: readJSON(text: params.egress_allowlist_json)
+            allowlist: new groovy.json.JsonSlurper().parseText(params.egress_allowlist_json ?: '[]')
           ]
-          writeJSON file: 'firewall-req.json', json: payload
+          def payloadText = new groovy.json.JsonOutput().toJson(payload)
+          writeFile file: 'firewall-req.json', text: payloadText
           withEnv(["M_SOCK=${env.FIREWALL_SOCK}"]) {
             sh '''
               set -eu
@@ -370,9 +371,11 @@ pipeline {
           // Its absence means the runner itself crashed/timed out. Treat that
           // as an infrastructure error so the state machine flips to `error`,
           // not `passed` or `failed`.
-          def resultExists = sh(returnStatus: true, script: '[ -s "$RESULT_JSON" ]') == 0
-          if (!resultExists) {
-            error("harness exited (rc=${env.HARNESS_EXIT}) without writing result.json — treating as build_errored")
+          script {
+            def resultExists = sh(returnStatus: true, script: '[ -s "$RESULT_JSON" ]') == 0
+            if (!resultExists) {
+              error("harness exited (rc=${env.HARNESS_EXIT}) without writing result.json — treating as build_errored")
+            }
           }
         }
       }
@@ -403,7 +406,8 @@ pipeline {
       steps {
         script {
           stopHeartbeat()
-          def result = readJSON file: env.RESULT_JSON
+          def resultText = sh(returnStdout: true, script: 'cat "$RESULT_JSON"').trim()
+          def result = new groovy.json.JsonSlurper().parseText(resultText)
           def cases = (result.cases instanceof List) ? result.cases : []
           def artifacts = [
             [ kind: 'logs',  s3_key: "logs/${params.test_run_id}/full.log", size_bytes: fileSize(env.FULL_LOG) ]
@@ -562,7 +566,7 @@ def validateRequiredParams() {
   }
   // Allowlist JSON — reject anything non-array.
   try {
-    def parsed = readJSON(text: params.egress_allowlist_json ?: '[]')
+    def parsed = new groovy.json.JsonSlurper().parseText(params.egress_allowlist_json ?: '[]')
     if (!(parsed instanceof List)) { error('egress_allowlist_json must be a JSON array') }
   } catch (ignored) {
     error('egress_allowlist_json is not valid JSON')
