@@ -35,7 +35,6 @@ pipeline {
 
   options {
     disableConcurrentBuilds(abortPrevious: false)
-    timestamps()
     buildDiscarder(logRotator(numToKeepStr: '200'))
     // Hard pipeline timeout — belt-and-braces beyond the harness wall clock.
     timeout(time: 90, unit: 'MINUTES')
@@ -371,7 +370,8 @@ pipeline {
           // Its absence means the runner itself crashed/timed out. Treat that
           // as an infrastructure error so the state machine flips to `error`,
           // not `passed` or `failed`.
-          if (!fileExists(env.RESULT_JSON)) {
+          def resultExists = sh(returnStatus: true, script: '[ -s "$RESULT_JSON" ]') == 0
+          if (!resultExists) {
             error("harness exited (rc=${env.HARNESS_EXIT}) without writing result.json — treating as build_errored")
           }
         }
@@ -408,7 +408,7 @@ pipeline {
           def artifacts = [
             [ kind: 'logs',  s3_key: "logs/${params.test_run_id}/full.log", size_bytes: fileSize(env.FULL_LOG) ]
           ]
-          if (fileExists(env.JUNIT_XML)) {
+          if (sh(returnStatus: true, script: '[ -s "$JUNIT_XML" ]') == 0) {
             artifacts << [ kind: 'junit', s3_key: "junit/${params.test_run_id}/junit.xml", size_bytes: fileSize(env.JUNIT_XML) ]
           }
           emitWebhook('build_completed', [
@@ -687,9 +687,10 @@ def isoNow() {
 // Uses env passing (no Groovy interpolation into shell) so file-size paths
 // can never smuggle shell metacharacters.
 def fileSize(String path) {
-  if (!fileExists(path)) return 0L
   def out
   withEnv(["M_FILE=${path}"]) {
+    def rc = sh(returnStatus: true, script: '[ -f "$M_FILE" ]')
+    if (rc != 0) return 0L
     out = sh(returnStdout: true, script: 'wc -c < "$M_FILE" | tr -d " \n"').trim()
   }
   return out.isLong() ? (out as Long) : 0L
