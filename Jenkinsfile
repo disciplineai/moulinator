@@ -142,7 +142,7 @@ pipeline {
             action:    'apply',
             network:   env.BUILD_NETWORK,
             hermetic:  params.hermetic,
-            allowlist: new groovy.json.JsonSlurper().parseText(params.egress_allowlist_json ?: '[]')
+            allowlist: new groovy.json.JsonSlurperClassic().parseText(params.egress_allowlist_json ?: '[]')
           ]
           writeFile file: 'firewall-req.json', text: groovy.json.JsonOutput.toJson(payload) + '\n'
           withEnv(["M_SOCK=${env.FIREWALL_SOCK}"]) {
@@ -435,7 +435,7 @@ pipeline {
         script {
           stopHeartbeat()
           def resultText = sh(returnStdout: true, script: 'cat "$RESULT_JSON"').trim()
-          def result = new groovy.json.JsonSlurper().parseText(resultText)
+          def result = new groovy.json.JsonSlurperClassic().parseText(resultText)
           def cases = (result.cases instanceof List) ? result.cases : []
           def artifacts = [
             [ kind: 'logs',  s3_key: "logs/${params.test_run_id}/full.log", size_bytes: fileSize(env.FULL_LOG) ]
@@ -594,7 +594,7 @@ def validateRequiredParams() {
   }
   // Allowlist JSON — reject anything non-array.
   try {
-    def parsed = new groovy.json.JsonSlurper().parseText(params.egress_allowlist_json ?: '[]')
+    def parsed = new groovy.json.JsonSlurperClassic().parseText(params.egress_allowlist_json ?: '[]')
     if (!(parsed instanceof List)) { error('egress_allowlist_json must be a JSON array') }
   } catch (ignored) {
     error('egress_allowlist_json is not valid JSON')
