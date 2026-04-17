@@ -42,7 +42,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 type Language = 'c' | 'cpp' | 'python' | 'bash' | 'haskell';
 
 class CreateProjectBody {
-  @IsString() @IsNotEmpty() @Matches(/^[a-z0-9][a-z0-9-]{0,63}$/) slug!: string;
+  @IsString() @IsNotEmpty() @Matches(/^[a-z0-9][a-z0-9_-]{0,63}$/) slug!: string;
   @IsString() @IsNotEmpty() name!: string;
   @IsEnum(['c', 'cpp', 'python', 'bash', 'haskell']) language!: Language;
   @IsString() @IsNotEmpty() tests_path!: string;
