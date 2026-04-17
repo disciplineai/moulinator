@@ -16,7 +16,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "prisma:generate": "prisma generate",
-    "prisma:migrate:deploy": "prisma migrate deploy"
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:seed": "ts-node --project tsconfig.json prisma/seed.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.656.0",

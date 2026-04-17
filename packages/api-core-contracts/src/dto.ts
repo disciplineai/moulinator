@@ -57,6 +57,50 @@ export interface ProjectDefinitionDto {
   runner_image_digest: string;
 }
 
+export interface AdminProjectDefinitionDto {
+  id: Ulid;
+  slug: string;
+  name: string;
+  language: Language;
+  tests_path: string;
+  runner_image_repo: string;
+  runner_image_digest: string;
+  hermetic: boolean;
+  egress_allowlist: unknown[];
+  timeout_seconds: number;
+  resource_limits: Record<string, unknown>;
+  harness_entrypoint: string;
+  created_at: Iso8601;
+  updated_at: Iso8601;
+}
+
+export interface CreateProjectDto {
+  slug: string;
+  name: string;
+  language: Language;
+  tests_path: string;
+  runner_image_repo: string;
+  runner_image_digest: string;
+  hermetic?: boolean;
+  egress_allowlist?: unknown[];
+  timeout_seconds?: number;
+  resource_limits?: Record<string, unknown>;
+  harness_entrypoint: string;
+}
+
+export interface UpdateProjectDto {
+  name?: string;
+  language?: Language;
+  tests_path?: string;
+  runner_image_repo?: string;
+  runner_image_digest?: string;
+  hermetic?: boolean;
+  egress_allowlist?: unknown[];
+  timeout_seconds?: number;
+  resource_limits?: Record<string, unknown>;
+  harness_entrypoint?: string;
+}
+
 export interface RepoDto {
   id: Ulid;
   project_id: Ulid;

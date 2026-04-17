@@ -13,6 +13,8 @@ const NAV = [
   { href: '/contribute', label: 'contribute', code: '03' },
 ];
 
+const ADMIN_NAV = { href: '/admin/projects', label: 'admin', code: '0A' };
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
@@ -41,7 +43,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="relative flex min-h-screen flex-col">
       <TopBar user={user} onLogout={handleLogout} />
       <div className="mx-auto grid w-full max-w-[1360px] flex-1 grid-cols-1 gap-0 px-6 md:grid-cols-[220px_1fr]">
-        <SideNav pathname={pathname} />
+        <SideNav pathname={pathname} isAdmin={user.role === 'admin'} />
         <main className="py-8 md:pl-10">{children}</main>
       </div>
       <Footer />
@@ -77,12 +79,13 @@ function TopBar({
   );
 }
 
-function SideNav({ pathname }: { pathname: string | null }) {
+function SideNav({ pathname, isAdmin }: { pathname: string | null; isAdmin: boolean }) {
+  const nav = isAdmin ? [...NAV, ADMIN_NAV] : NAV;
   return (
     <aside className="hidden border-r border-ink/10 pr-8 pt-10 md:block">
       <div className="eyebrow mb-6 text-ink-400">— navigation</div>
       <ul className="flex flex-col gap-1">
-        {NAV.map((n) => {
+        {nav.map((n) => {
           const active = pathname?.startsWith(n.href);
           return (
             <li key={n.href}>

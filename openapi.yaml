@@ -157,6 +157,66 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/ProjectDefinition" }
 
+  /admin/projects:
+    get:
+      summary: List all project definitions with full fields (admin only)
+      tags: [admin]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AdminProjectDefinition" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      summary: Create a project definition (admin only)
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProjectCreate" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminProjectDefinition" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  /admin/projects/{slug}:
+    put:
+      summary: Update a project definition (admin only)
+      tags: [admin]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProjectUpdate" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminProjectDefinition" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+    delete:
+      summary: Delete a project definition (admin only)
+      tags: [admin]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /repos:
     get:
       summary: List repositories for current user
@@ -395,6 +455,9 @@ components:
     Unauthorized:
       description: Missing/invalid credentials
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Forbidden:
+      description: Insufficient permissions
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     NotFound:
       description: Not found
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
@@ -478,6 +541,55 @@ components:
         tests_path: { type: string }
         hermetic: { type: boolean }
         runner_image_digest: { type: string }
+
+    AdminProjectDefinition:
+      type: object
+      required: [id, slug, name, language, tests_path, runner_image_repo, runner_image_digest, hermetic, egress_allowlist, timeout_seconds, resource_limits, harness_entrypoint, created_at, updated_at]
+      properties:
+        id: { type: string, format: ulid }
+        slug: { type: string }
+        name: { type: string }
+        language: { type: string, enum: [c, cpp, python, bash, haskell] }
+        tests_path: { type: string }
+        runner_image_repo: { type: string }
+        runner_image_digest: { type: string }
+        hermetic: { type: boolean }
+        egress_allowlist: { type: array, items: { type: object, additionalProperties: true } }
+        timeout_seconds: { type: integer }
+        resource_limits: { type: object, additionalProperties: true }
+        harness_entrypoint: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ProjectCreate:
+      type: object
+      required: [slug, name, language, tests_path, runner_image_repo, runner_image_digest, harness_entrypoint]
+      properties:
+        slug: { type: string }
+        name: { type: string }
+        language: { type: string, enum: [c, cpp, python, bash, haskell] }
+        tests_path: { type: string }
+        runner_image_repo: { type: string }
+        runner_image_digest: { type: string }
+        hermetic: { type: boolean }
+        egress_allowlist: { type: array, items: { type: object, additionalProperties: true } }
+        timeout_seconds: { type: integer }
+        resource_limits: { type: object, additionalProperties: true }
+        harness_entrypoint: { type: string }
+
+    ProjectUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        language: { type: string, enum: [c, cpp, python, bash, haskell] }
+        tests_path: { type: string }
+        runner_image_repo: { type: string }
+        runner_image_digest: { type: string }
+        hermetic: { type: boolean }
+        egress_allowlist: { type: array, items: { type: object, additionalProperties: true } }
+        timeout_seconds: { type: integer }
+        resource_limits: { type: object, additionalProperties: true }
+        harness_entrypoint: { type: string }
 
     Repo:
       type: object

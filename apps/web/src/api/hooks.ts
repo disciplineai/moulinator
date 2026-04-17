@@ -93,6 +93,22 @@ export function useProjects() {
   });
 }
 
+export interface AdminProject {
+  id: string; slug: string; name: string; language: string;
+  tests_path: string; runner_image_repo: string; runner_image_digest: string;
+  hermetic: boolean; egress_allowlist: unknown[]; timeout_seconds: number;
+  resource_limits: Record<string, unknown>; harness_entrypoint: string;
+  created_at: string; updated_at: string;
+}
+
+export function useAdminProjects() {
+  return useAsync<AdminProject[]>(async () => {
+    const { data, error } = await api.GET('/admin/projects' as '/projects');
+    if (error) throw error;
+    return (data ?? []) as unknown as AdminProject[];
+  });
+}
+
 export function useRepos() {
   return useAsync<RepoList>(async () => {
     try {

@@ -103,3 +103,4 @@ ENTRYPOINT ["/sbin/tini", "--"]
 # compiled entry lives at dist/apps/api/src/main.js rather than dist/main.js.
 # If backend-crud flattens that later, update the CMD in lockstep.
 CMD ["sh", "-c", "prisma migrate deploy --schema=./prisma/schema.prisma && node dist/apps/api/src/main.js"]
+# Note: to seed projects, run once: docker exec <api-container> sh -c "cd /app && npx ts-node prisma/seed.ts"
