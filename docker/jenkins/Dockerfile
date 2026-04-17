@@ -9,7 +9,7 @@
 # which the configuration-as-code plugin reads. JENKINS_ADMIN_PASSWORD must
 # be supplied via env (set in Dokploy secrets).
 
-FROM jenkins/jenkins:2.462.3-lts-jdk21
+FROM jenkins/jenkins:2.504.1-lts-jdk21
 
 USER root
 
