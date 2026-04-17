@@ -38,7 +38,7 @@ jenkins:
 
 unclassified:
   location:
-    url: "${JENKINS_URL:-http://jenkins-controller:8080}"
+    url: "${JENKINS_PUBLIC_URL:-http://jenkins-controller:8080}"
 
 credentials:
   system:

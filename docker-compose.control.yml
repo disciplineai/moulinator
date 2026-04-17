@@ -258,6 +258,7 @@ services:
       JENKINS_ADMIN_USER: ${JENKINS_ADMIN_USER:-admin}
       JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD}
       JENKINS_URL: ${JENKINS_URL}
+      JENKINS_PUBLIC_URL: ${JENKINS_PUBLIC_URL:-http://jenkins-controller:8080}
       JENKINS_WEBHOOK_SECRET: ${JENKINS_WEBHOOK_SECRET}
       # -Dhudson.TcpSlaveAgentListener.hostName forces the agent to dial the
       # publicly-reachable hostname when falling back from WebSocket.
