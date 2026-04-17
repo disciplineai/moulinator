@@ -41,6 +41,10 @@ The build is divided into phases; each produces a narrative doc under `docs/phas
 - **Phase 5** — fix loop.
 - **Phase 6** — ship to Dokploy.
 
+## Acceptable-use policy
+
+Reconstructing tests from Epitech AT traces is a policy question distinct from the engineering. The project owner recorded their decision in `docs/policy-acceptable-use.md` before Phase 1 started; see that file for the scope and revisitation terms.
+
 ## Status
 
-Greenfield — Phase 0 just landed. Nothing executable yet.
+Phases 0 through 5 shipped. Next: Phase 4 compliance gate closed, Phase 6 deploy smoke pending.
