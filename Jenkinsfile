@@ -107,6 +107,11 @@ pipeline {
     // ---------------------------------------------------------------------
     stage('pull runner image') {
       steps {
+        withCredentials([usernamePassword(credentialsId: 'ghcr-pull-secret',
+                                         usernameVariable: 'GHCR_USER',
+                                         passwordVariable: 'GHCR_TOKEN')]) {
+          sh 'echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin'
+        }
         withEnv(["M_IMAGE_REF=${params.runner_image_repo}@${params.runner_image_digest}"]) {
           sh '''
             set -eu

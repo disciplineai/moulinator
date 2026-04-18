@@ -1,0 +1,15 @@
+slug: my-teams
+name: "My Teams"
+language: c
+tests_path: my-teams/tests
+runner_image_repo: ghcr.io/disciplineai/moulinator/runner-epitest
+runner_image_digest: sha256:b95cafe4d913da4cbb23c009106106d7510892d758ba5f013382db12e2852213
+hermetic: true
+egress_allowlist: []
+timeout_seconds: 600
+resource_limits:
+  memory_mb: 2048
+  cpus: 2
+  pids: 512
+  disk_mb: 1024
+harness_entrypoint: tests/harness.sh
