@@ -754,14 +754,14 @@ static List parseResultCases(String resultJson) {
 @NonCPS
 static Object deepConvert(Object obj) {
   if (obj instanceof Map) {
-    def m = new java.util.LinkedHashMap()
+    def m = [:]
     for (def entry : obj.entrySet()) {
       m.put(entry.key.toString(), deepConvert(entry.value))
     }
     return m
   }
   if (obj instanceof List) {
-    def list = new java.util.ArrayList()
+    def list = []
     for (def item : obj) {
       list.add(deepConvert(item))
     }
