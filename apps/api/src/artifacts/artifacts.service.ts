@@ -49,9 +49,15 @@ export class ArtifactsService {
     if (!row || row.run.repo.user_id !== userId) {
       throw new NotFoundException({ error: 'artifact_not_found' });
     }
+    const bucket = KIND_BUCKET[row.kind];
+    // Strip legacy bucket-name prefix that old Jenkinsfile versions baked into s3_key.
+    const legacyPrefix = bucket + '/';
+    const key = row.s3_key.startsWith(legacyPrefix)
+      ? row.s3_key.slice(legacyPrefix.length)
+      : row.s3_key;
     const { url, expiresAt } = await this.storage.presignGet({
-      bucket: KIND_BUCKET[row.kind],
-      key: row.s3_key,
+      bucket,
+      key,
       expiresInSeconds: 300,
     });
     return { url, expires_at: expiresAt.toISOString() };

@@ -292,10 +292,10 @@ describe('JenkinsWebhookService', () => {
       finished_at: '2026-04-17T12:02:15Z',
       cases: [
         { name: 'a', status: 'passed', duration_ms: 10 },
-        { name: 'b', status: 'passed', duration_ms: 12, artifact_ref: 'logs/x/b.log' },
+        { name: 'b', status: 'passed', duration_ms: 12, artifact_ref: 'x/b.log' },
       ],
       artifacts: [
-        { kind: 'logs', s3_key: 'logs/x/full.log', size_bytes: 1024 },
+        { kind: 'logs', s3_key: 'x/full.log', size_bytes: 1024 },
       ],
     };
     const body = Buffer.from(JSON.stringify(completedPayload));

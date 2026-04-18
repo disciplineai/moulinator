@@ -435,10 +435,10 @@ pipeline {
           // parseResultCases is @NonCPS: returns ArrayList<LinkedHashMap>, fully serializable.
           def cases = parseResultCases(resultText)
           def artifacts = [
-            [ kind: 'logs',  s3_key: "logs/${params.test_run_id}/full.log", size_bytes: fileSize(env.FULL_LOG) ]
+            [ kind: 'logs',  s3_key: "${params.test_run_id}/full.log", size_bytes: fileSize(env.FULL_LOG) ]
           ]
           if (sh(returnStatus: true, script: '[ -s "$JUNIT_XML" ]') == 0) {
-            artifacts << [ kind: 'junit', s3_key: "junit/${params.test_run_id}/junit.xml", size_bytes: fileSize(env.JUNIT_XML) ]
+            artifacts << [ kind: 'junit', s3_key: "${params.test_run_id}/junit.xml", size_bytes: fileSize(env.JUNIT_XML) ]
           }
           emitWebhook('build_completed', [
             test_run_id: params.test_run_id,
