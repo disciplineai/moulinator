@@ -181,7 +181,7 @@ pipeline {
             curl --fail --silent --show-error --max-time 120 \
                  --output "$M_TARBALL_PATH" \
                  "$M_WORKSPACE_URL"
-            tar -xzf "$M_TARBALL_PATH" -C "$M_WORKSPACE_DIR"
+            tar -xzf "$M_TARBALL_PATH" -C "$M_WORKSPACE_DIR" --strip-components=1
           '''
         }
       }
