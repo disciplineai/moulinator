@@ -755,11 +755,17 @@ static List parseResultCases(String resultJson) {
 static Object deepConvert(Object obj) {
   if (obj instanceof Map) {
     def m = new java.util.LinkedHashMap()
-    obj.each { k, v -> m[k.toString()] = deepConvert(v) }
+    for (def entry : obj.entrySet()) {
+      m.put(entry.key.toString(), deepConvert(entry.value))
+    }
     return m
   }
   if (obj instanceof List) {
-    return new java.util.ArrayList(obj.collect { deepConvert(it) })
+    def list = new java.util.ArrayList()
+    for (def item : obj) {
+      list.add(deepConvert(item))
+    }
+    return list
   }
   return obj
 }
